@@ -16,36 +16,39 @@ scottgs::MatrixMultiply::~MatrixMultiply()
 }
 
 static inline float dot_product(
-    scottgs::FloatMatrix::size_type size,
-    scottgs::FloatMatrix::const_iterator1 v1,
-    scottgs::FloatMatrix::const_iterator2 v2)
+    scottgs::FloatMatrix::array_type lhs,
+    scottgs::FloatMatrix::size_type lhs_width,
+    scottgs::FloatMatrix::array_type rhs,
+    scottgs::FloatMatrix::size_type rhs_width,
+    scottgs::FloatMatrix::size_type r,
+    scottgs::FloatMatrix::size_type c)
 {
     float result = 0.0;
-    auto a = v1.cbegin();
-    auto b = v2.cbegin();
-    for (scottgs::FloatMatrix::size_type i = 0; i < size; i++, a++, b++)
-        result += (*a) * (*b);
+    for (scottgs::FloatMatrix::size_type i = 0; i < lhs_width; i++)
+        result += lhs[r * lhs_width + i] * rhs[i * rhs_width + c];
     return result;
 }
 
 scottgs::FloatMatrix scottgs::MatrixMultiply::operator()(
-    const scottgs::FloatMatrix &lhs,
-    const scottgs::FloatMatrix &rhs) const
+    const scottgs::FloatMatrix &lhs_m,
+    const scottgs::FloatMatrix &rhs_m) const
 {
     // Verify acceptable dimensions
-    if (lhs.size2() != rhs.size1())
+    if (lhs_m.size2() != rhs_m.size1())
         throw std::logic_error("matrix incompatible lhs.size2() != rhs.size1()");
 
-    scottgs::FloatMatrix result(lhs.size1(), rhs.size2());
-    auto size = lhs.size2();
-    auto row = lhs.cbegin1();
-    auto col = rhs.cbegin2();
+    scottgs::FloatMatrix result_m(lhs_m.size1(), rhs_m.size2());
+    scottgs::FloatMatrix::array_type &result = result_m.data();
+    const scottgs::FloatMatrix::array_type &lhs = lhs_m.data();
+    const scottgs::FloatMatrix::array_type &rhs = rhs_m.data();
+    auto lhs_width = lhs_m.size2(), rhs_width = rhs_m.size2();
 
-    for (auto row = lhs.cbegin1(); row != lhs.cend1(); row++)
-        for (auto col = rhs.cbegin2(); col != rhs.cend2(); col++)
-            result(row.index1(), col.index2()) = dot_product(size, row, col);
+    for (scottgs::FloatMatrix::size_type r = 0; r < lhs_m.size1(); r++)
+        for (scottgs::FloatMatrix::size_type c = 0; c < rhs_m.size2(); c++)
+            result[r * rhs_width + c] =
+                dot_product(lhs, lhs_width, rhs, rhs_width, r, c);
 
-    return result;
+    return result_m;
 }
 
 scottgs::FloatMatrix scottgs::MatrixMultiply::multiply(const scottgs::FloatMatrix &lhs, const scottgs::FloatMatrix &rhs) const
