@@ -17,15 +17,13 @@ scottgs::MatrixMultiply::~MatrixMultiply()
 
 static inline float dot_product(
     scottgs::FloatMatrix::array_type lhs,
-    scottgs::FloatMatrix::size_type lhs_width,
-    scottgs::FloatMatrix::array_type rhs,
-    scottgs::FloatMatrix::size_type rhs_width,
-    scottgs::FloatMatrix::size_type r,
-    scottgs::FloatMatrix::size_type c)
+    scottgs::FloatMatrix::value_type rhs[],
+    scottgs::FloatMatrix::size_type size,
+    scottgs::FloatMatrix::size_type row)
 {
     float result = 0.0;
-    for (scottgs::FloatMatrix::size_type i = 0; i < lhs_width; i++)
-        result += lhs[r * lhs_width + i] * rhs[i * rhs_width + c];
+    for (scottgs::FloatMatrix::size_type i = 0; i < size; i++)
+        result += lhs[row * size + i] * rhs[i];
     return result;
 }
 
@@ -39,15 +37,27 @@ scottgs::FloatMatrix scottgs::MatrixMultiply::operator()(
 
     scottgs::FloatMatrix result_m(lhs_m.size1(), rhs_m.size2());
     scottgs::FloatMatrix::array_type &result = result_m.data();
+
+    auto lhs_n_rows = lhs_m.size1(),
+         rhs_n_rows = rhs_m.size1(), rhs_n_cols = rhs_m.size2();
+
     const scottgs::FloatMatrix::array_type &lhs = lhs_m.data();
+
     const scottgs::FloatMatrix::array_type &rhs = rhs_m.data();
-    auto lhs_width = lhs_m.size2(), rhs_width = rhs_m.size2();
+    scottgs::FloatMatrix::value_type *col_trans =
+        new scottgs::FloatMatrix::value_type[rhs_n_rows];
 
-    for (scottgs::FloatMatrix::size_type r = 0; r < lhs_m.size1(); r++)
-        for (scottgs::FloatMatrix::size_type c = 0; c < rhs_m.size2(); c++)
-            result[r * rhs_width + c] =
-                dot_product(lhs, lhs_width, rhs, rhs_width, r, c);
+    for (scottgs::FloatMatrix::size_type b = 0; b < rhs_n_cols; b++)
+    {
+        // Transpose column about to be used
+        for (scottgs::FloatMatrix::size_type i = 0; i < rhs_n_rows; i++)
+            col_trans[i] = rhs[i * rhs_n_cols + b];
+        // Do calculations
+        for (scottgs::FloatMatrix::size_type a = 0; a < lhs_n_rows; a++)
+            result[a * rhs_n_cols + b] = dot_product(lhs, col_trans, rhs_n_rows, a);
+    }
 
+    delete[] col_trans;
     return result_m;
 }
 
