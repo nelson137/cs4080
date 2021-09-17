@@ -288,10 +288,13 @@ inline void SuperpixelSLIC::_draw_contours()
 {
     static constexpr int dx8[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
     static constexpr int dy8[8] = {0, -1, -1, -1, 0, 1, 1, 1};
+    static const Vec3b color_ffffff = Vec3b(0xff, 0xff, 0xff);
+    static const Vec3b color_000000 = Vec3b(0x00, 0x00, 0x00);
 
-    vector<bool> istaken(m_img_size, false);
-    vector<int> contourx(m_img_size);
-    vector<int> contoury(m_img_size);
+    vector<bool> is_taken(m_img_size, false);
+    vector<int> contour_x(m_img_size);
+    vector<int> contour_y(m_img_size);
+
     int mainindex = 0;
     int cind = 0;
     for (int j = 0; j < m_height; j++)
@@ -313,9 +316,9 @@ inline void SuperpixelSLIC::_draw_contours()
             }
             if (np > 1)
             {
-                contourx[cind] = k;
-                contoury[cind] = j;
-                istaken[mainindex] = true;
+                contour_x[cind] = k;
+                contour_y[cind] = j;
+                is_taken[mainindex] = true;
                 cind++;
             }
             mainindex++;
@@ -325,19 +328,18 @@ inline void SuperpixelSLIC::_draw_contours()
     int numboundpix = cind;
     for (int j = 0; j < numboundpix; j++)
     {
-        int ii = contoury[j] * m_width + contourx[j];
-        m_img->at<Vec3b>(ii) = Vec3b(0xff, 0xff, 0xff);
+        m_img->at<Vec3b>(contour_y[j], contour_x[j]) = color_ffffff;
 
         for (int n = 0; n < 8; n++)
         {
-            int x = contourx[j] + dx8[n];
-            int y = contoury[j] + dy8[n];
+            int x = contour_x[j] + dx8[n];
+            int y = contour_y[j] + dy8[n];
             if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
             {
                 int ind = y * m_width + x;
-                if (!istaken[ind])
+                if (!is_taken[ind])
                 {
-                    m_img->at<Vec3b>(ii) = Vec3b(0x00, 0x00, 0x00);
+                    m_img->at<Vec3b>(contour_y[j], contour_x[j]) = color_000000;
                 }
             }
         }
