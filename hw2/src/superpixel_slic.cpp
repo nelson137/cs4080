@@ -12,7 +12,7 @@ using namespace cv;
 
 SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
 {
-    // m_strip_size = int(sqrt(k));
+    m_strip_size = int(sqrt(k));
     m_n_channels = img->channels();
 
     m_width = img->size().width;
@@ -22,8 +22,7 @@ SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
     split(*img, m_channels);
 
     m_cluster_size = 0.5 + double(m_img_size) / double(m_k);
-    // m_cluster_side_len = m_width / m_strip_size;
-    m_step = sqrt(double(m_cluster_size)) + 0.5;
+    m_cluster_side_len = m_width / m_strip_size;
 
     m_kseeds_l.resize(m_k);
     m_kseeds_a.resize(m_k);
@@ -38,55 +37,36 @@ SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
 
 inline void SuperpixelSLIC::_init_seeds()
 {
-    int numseeds = 0;
-    int n = 0;
+    int xoff = m_cluster_side_len / 2;
+    int yoff = m_cluster_side_len / 2;
 
-    int xstrips = (0.5 + double(m_width) / double(m_step));
-    int ystrips = (0.5 + double(m_height) / double(m_step));
+    int err = m_width - m_cluster_side_len * m_strip_size;
+    double err_per_strip = int(double(err) / double(m_strip_size));
 
-    int xerr = m_width - m_step * xstrips;
-    if (xerr < 0)
+    int i = 0;
+
+    for (int y = 0; y < m_strip_size; y++)
     {
-        xstrips--;
-        xerr = m_width - m_step * xstrips;
-    }
-    int yerr = m_height - m_step * ystrips;
-    if (yerr < 0)
-    {
-        ystrips--;
-        yerr = m_height - m_step * ystrips;
-    }
+        int y_err = y * err_per_strip;
+        int Y = y * m_cluster_side_len + yoff + y_err;
+        if (Y > m_height - 1)
+            continue;
 
-    double xerrperstrip = double(xerr) / double(xstrips);
-    double yerrperstrip = double(yerr) / double(ystrips);
-
-    int xoff = m_step / 2;
-    int yoff = m_step / 2;
-    //-------------------------
-    numseeds = xstrips * ystrips;
-    //-------------------------
-    m_kseeds_l.resize(numseeds);
-    m_kseeds_a.resize(numseeds);
-    m_kseeds_b.resize(numseeds);
-    m_kseeds_x.resize(numseeds);
-    m_kseeds_y.resize(numseeds);
-
-    for (int y = 0; y < ystrips; y++)
-    {
-        int ye = y * yerrperstrip;
-        for (int x = 0; x < xstrips; x++)
+        for (int x = 0; x < m_strip_size; x++)
         {
-            int xe = x * xerrperstrip;
-            int seedx = (x * m_step + xoff + xe);
-            int seedy = (y * m_step + yoff + ye);
-            int i = seedy * m_width + seedx;
+            int x_err = x * err_per_strip;
+            int X = x * m_cluster_side_len + xoff + x_err;
+            if (X > m_width - 1)
+                continue;
 
-            m_kseeds_l[n] = m_channels[0].at<uchar>(i);
-            m_kseeds_a[n] = m_channels[1].at<uchar>(i);
-            m_kseeds_b[n] = m_channels[2].at<uchar>(i);
-            m_kseeds_x[n] = seedx;
-            m_kseeds_y[n] = seedy;
-            n++;
+            m_kseeds_l[i] = m_channels[0].at<uchar>(Y, X);
+            m_kseeds_a[i] = m_channels[1].at<uchar>(Y, X);
+            m_kseeds_b[i] = m_channels[2].at<uchar>(Y, X);
+
+            m_kseeds_x[i] = (double)X;
+            m_kseeds_y[i] = (double)Y;
+
+            i++;
         }
     }
 }
@@ -100,29 +80,28 @@ void SuperpixelSLIC::run()
 
 inline void SuperpixelSLIC::_iterations()
 {
-    int offset = m_step;
-
-    vector<double> cluster_sizes(m_k, 0);
-    vector<double> inverses(m_k, 0); //to store 1/clustersize[k] values
+    vector<double> clustersize(m_k, 0);
+    vector<double> inverses(m_k, 0);
     vector<double> sigma_l(m_k, 0);
     vector<double> sigma_a(m_k, 0);
     vector<double> sigma_b(m_k, 0);
     vector<double> sigma_x(m_k, 0);
     vector<double> sigma_y(m_k, 0);
-    vector<double> dist_values(m_img_size, DBL_MAX);
-    // inverse_weight = 1.0 / ( (m_step/COMPACTNESS) * (m_step/COMPACTNESS) )
-    double inverse_weight = (COMPACTNESS * COMPACTNESS) / (m_step * m_step);
+    vector<double> dists(m_img_size, DBL_MAX);
+
+    double inverse_weight = double(m_cluster_side_len * m_cluster_side_len) / double(m_cluster_side_len);
     int x1, y1, x2, y2;
     double l, a, b, dist, distxy;
+
     for (int itr = 0; itr < 10; itr++)
     {
-        dist_values.assign(m_img_size, DBL_MAX);
-        for (int k = 0; k < m_k; k++)
+        dists.assign(m_img_size, DBL_MAX);
+        for (int n = 0; n < m_k; n++)
         {
-            y1 = max(0.0, m_kseeds_y[k] - offset);
-            y2 = min((double)m_height, m_kseeds_y[k] + offset);
-            x1 = max(0.0, m_kseeds_x[k] - offset);
-            x2 = min((double)m_width, m_kseeds_x[k] + offset);
+            y1 = max(0.0, m_kseeds_y[n] - m_cluster_side_len);
+            y2 = min((double)m_height, m_kseeds_y[n] + m_cluster_side_len);
+            x1 = max(0.0, m_kseeds_x[n] - m_cluster_side_len);
+            x2 = min((double)m_width, m_kseeds_x[n] + m_cluster_side_len);
             for (int y = y1; y < y2; y++)
             {
                 for (int x = x1; x < x2; x++)
@@ -131,23 +110,24 @@ inline void SuperpixelSLIC::_iterations()
                     l = m_channels[0].at<uchar>(i);
                     a = m_channels[1].at<uchar>(i);
                     b = m_channels[2].at<uchar>(i);
-                    dist = (l - m_kseeds_l[k]) * (l - m_kseeds_l[k]) +
-                           (a - m_kseeds_a[k]) * (a - m_kseeds_a[k]) +
-                           (b - m_kseeds_b[k]) * (b - m_kseeds_b[k]);
-                    distxy = (x - m_kseeds_x[k]) * (x - m_kseeds_x[k]) +
-                             (y - m_kseeds_y[k]) * (y - m_kseeds_y[k]);
+                    dist = (l - m_kseeds_l[n]) * (l - m_kseeds_l[n]) +
+                           (a - m_kseeds_a[n]) * (a - m_kseeds_a[n]) +
+                           (b - m_kseeds_b[n]) * (b - m_kseeds_b[n]);
+                    distxy = (x - m_kseeds_x[n]) * (x - m_kseeds_x[n]) +
+                             (y - m_kseeds_y[n]) * (y - m_kseeds_y[n]);
 
                     //------------------------------------------------------------------------
                     dist += distxy * inverse_weight;
                     //------------------------------------------------------------------------
-                    if (dist < dist_values[i])
+                    if (dist < dists[i])
                     {
-                        dist_values[i] = dist;
-                        m_labels[i] = k;
+                        dists[i] = dist;
+                        m_labels[i] = n;
                     }
                 }
             }
         }
+
         //-----------------------------------------------------------------
         // Recalculate the centroid and store in the seed values
         //-----------------------------------------------------------------
@@ -158,27 +138,28 @@ inline void SuperpixelSLIC::_iterations()
         sigma_b.assign(m_k, 0);
         sigma_x.assign(m_k, 0);
         sigma_y.assign(m_k, 0);
-        cluster_sizes.assign(m_k, 0);
+        clustersize.assign(m_k, 0);
         int ind = 0;
         for (int r = 0; r < m_height; r++)
         {
             for (int c = 0; c < m_width; c++)
             {
                 sigma_l[m_labels[ind]] += m_channels[0].at<uchar>(ind);
-                sigma_a[m_labels[ind]] += m_channels[0].at<uchar>(ind);
-                sigma_b[m_labels[ind]] += m_channels[0].at<uchar>(ind);
+                sigma_a[m_labels[ind]] += m_channels[1].at<uchar>(ind);
+                sigma_b[m_labels[ind]] += m_channels[2].at<uchar>(ind);
                 sigma_x[m_labels[ind]] += c;
                 sigma_y[m_labels[ind]] += r;
-                cluster_sizes[m_labels[ind]] += 1.0;
+                clustersize[m_labels[ind]] += 1.0;
                 ind++;
             }
         }
+
         for (int k = 0; k < m_k; k++)
         {
-            if (cluster_sizes[k] <= 0)
-                cluster_sizes[k] = 1;
+            if (clustersize[k] <= 0)
+                clustersize[k] = 1;
             // computing inverse now to multiply, than divide later
-            inverses[k] = 1.0 / cluster_sizes[k];
+            inverses[k] = 1.0 / clustersize[k];
         }
 
         for (int k = 0; k < m_k; k++)
@@ -202,10 +183,10 @@ inline void SuperpixelSLIC::_enforce_connectivity()
         new_labels[i] = -1;
 
     int label = 0;
-    int *x_values = new int[m_img_size];
-    int *y_values = new int[m_img_size];
+    int *xvec = new int[m_img_size];
+    int *yvec = new int[m_img_size];
     int oindex = 0;
-    int adjlabel = 0;
+    int adjlabel = 0; //adjacent label
     for (int j = 0; j < m_height; j++)
     {
         for (int k = 0; k < m_width; k++)
@@ -216,16 +197,16 @@ inline void SuperpixelSLIC::_enforce_connectivity()
                 //--------------------
                 // Start a new segment
                 //--------------------
-                x_values[0] = k;
-                y_values[0] = j;
+                xvec[0] = k;
+                yvec[0] = j;
                 //-------------------------------------------------------
                 // Quickly find an adjacent label for use later if needed
                 //-------------------------------------------------------
                 {
                     for (int n = 0; n < 4; n++)
                     {
-                        int x = x_values[0] + dx4[n];
-                        int y = y_values[0] + dy4[n];
+                        int x = xvec[0] + dx4[n];
+                        int y = yvec[0] + dy4[n];
                         if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
                         {
                             int nindex = y * m_width + x;
@@ -240,8 +221,8 @@ inline void SuperpixelSLIC::_enforce_connectivity()
                 {
                     for (int n = 0; n < 4; n++)
                     {
-                        int x = x_values[c] + dx4[n];
-                        int y = y_values[c] + dy4[n];
+                        int x = xvec[c] + dx4[n];
+                        int y = yvec[c] + dy4[n];
 
                         if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
                         {
@@ -249,8 +230,8 @@ inline void SuperpixelSLIC::_enforce_connectivity()
 
                             if (0 > new_labels[nindex] && m_labels[oindex] == m_labels[nindex])
                             {
-                                x_values[count] = x;
-                                y_values[count] = y;
+                                xvec[count] = x;
+                                yvec[count] = y;
                                 new_labels[nindex] = label;
                                 count++;
                             }
@@ -265,7 +246,7 @@ inline void SuperpixelSLIC::_enforce_connectivity()
                 {
                     for (int c = 0; c < count; c++)
                     {
-                        int ind = y_values[c] * m_width + x_values[c];
+                        int ind = yvec[c] * m_width + xvec[c];
                         new_labels[ind] = adjlabel;
                     }
                     label--;
@@ -278,10 +259,10 @@ inline void SuperpixelSLIC::_enforce_connectivity()
 
     m_labels = new_labels;
 
-    if (x_values)
-        delete[] x_values;
-    if (y_values)
-        delete[] y_values;
+    if (xvec)
+        delete[] xvec;
+    if (yvec)
+        delete[] yvec;
 }
 
 inline void SuperpixelSLIC::_draw_contours()
@@ -329,7 +310,6 @@ inline void SuperpixelSLIC::_draw_contours()
     for (int j = 0; j < numboundpix; j++)
     {
         m_img->at<Vec3b>(contour_y[j], contour_x[j]) = color_ffffff;
-
         for (int n = 0; n < 8; n++)
         {
             int x = contour_x[j] + dx8[n];
@@ -345,338 +325,3 @@ inline void SuperpixelSLIC::_draw_contours()
         }
     }
 }
-
-/*
-SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
-{
-    m_strip_size = int(sqrt(k));
-    m_n_channels = img->channels();
-
-    m_width = img->size().width;
-    m_height = img->size().height;
-    m_img_size = m_width * m_height;
-
-    split(*img, m_channels);
-
-    m_cluster_size = m_img_size / m_k;
-    m_cluster_side_len = m_width / m_strip_size;
-
-    m_kseeds_l.resize(m_k);
-    m_kseeds_a.resize(m_k);
-    m_kseeds_b.resize(m_k);
-    m_kseeds_x.resize(m_k);
-    m_kseeds_y.resize(m_k);
-
-    m_klabels.resize(m_img_size);
-    m_klabels_connected.resize(m_img_size);
-
-    _init_seeds();
-}
-
-inline void SuperpixelSLIC::_init_seeds()
-{
-    int xoff = m_cluster_side_len / 2;
-    int yoff = m_cluster_side_len / 2;
-
-    int err = m_width - m_cluster_side_len * m_strip_size;
-    double err_per_strip = int(double(err) / double(m_strip_size));
-
-    int i = 0;
-
-    for (int y = 0; y < m_strip_size; y++)
-    {
-        int y_err = y * err_per_strip;
-        int Y = y * m_cluster_side_len + yoff + y_err;
-        if (Y > m_height - 1)
-            continue;
-
-        for (int x = 0; x < m_strip_size; x++)
-        {
-            int x_err = x * err_per_strip;
-            int X = x * m_cluster_side_len + xoff + x_err;
-            if (X > m_width - 1)
-                continue;
-
-            m_kseeds_l[i] = m_channels[0].at<uchar>(Y, X);
-            m_kseeds_a[i] = m_channels[1].at<uchar>(Y, X);
-            m_kseeds_b[i] = m_channels[2].at<uchar>(Y, X);
-
-            m_kseeds_x[i] = (double)X;
-            m_kseeds_y[i] = (double)Y;
-
-            i++;
-        }
-    }
-}
-
-SuperpixelSLIC::~SuperpixelSLIC()
-{
-}
-
-void SuperpixelSLIC::run()
-{
-    _iterations();
-    _enforce_connectivity();
-    _draw_contours();
-}
-
-inline void SuperpixelSLIC::_iterations()
-{
-    vector<double> clustersize(m_k, 0);
-    vector<double> inverses(m_k, 0);
-    vector<double> sigma_l(m_k, 0);
-    vector<double> sigma_a(m_k, 0);
-    vector<double> sigma_b(m_k, 0);
-    vector<double> sigma_x(m_k, 0);
-    vector<double> sigma_y(m_k, 0);
-    vector<double> dists(m_img_size, FLT_MAX);
-
-    int img_size = m_img_size;
-    double offset = m_cluster_side_len + 0.5;
-    double inverse_weight = 1.0 / (m_cluster_side_len / (offset * offset));
-    int x1, y1, x2, y2;
-    double l, a, b;
-    double dist;
-    double distxy;
-
-    for (int itr = 0; itr < 10; itr++)
-    {
-        dists.assign(img_size, DBL_MAX);
-        for (int n = 0; n < m_k; n++)
-        {
-            y1 = max(0.0f, m_kseeds_y[n] - offset);
-            y2 = min((double)m_height, m_kseeds_y[n] + offset);
-            x1 = max(0.0f, m_kseeds_x[n] - offset);
-            x2 = min((double)m_width, m_kseeds_x[n] + offset);
-            if (itr == 0)
-                cout << '(' << x1 << ',' << y1 << ") -> (" << x2 << ',' << y2 << ')' << endl;
-            for (int y = y1; y < y2; y++)
-            {
-                for (int x = x1; x < x2; x++)
-                {
-                    int i = y * m_width + x;
-                    l = m_channels[0].at<uchar>(i);
-                    a = m_channels[1].at<uchar>(i);
-                    b = m_channels[2].at<uchar>(i);
-                    dist = (l - m_kseeds_l[n]) * (l - m_kseeds_l[n]) +
-                           (a - m_kseeds_a[n]) * (a - m_kseeds_a[n]) +
-                           (b - m_kseeds_b[n]) * (b - m_kseeds_b[n]);
-                    distxy = (x - m_kseeds_x[n]) * (x - m_kseeds_x[n]) +
-                             (y - m_kseeds_y[n]) * (y - m_kseeds_y[n]);
-
-                    //------------------------------------------------------------------------
-                    dist += distxy * inverse_weight;
-                    //------------------------------------------------------------------------
-                    if (dist < dists[i])
-                    {
-                        dists[i] = dist;
-                        m_klabels[i] = n;
-                    }
-                }
-            }
-        }
-
-        //-----------------------------------------------------------------
-        // Recalculate the centroid and store in the seed values
-        //-----------------------------------------------------------------
-        //instead of reassigning memory on each iteration, just reset.
-
-        sigma_l.assign(m_k, 0);
-        sigma_a.assign(m_k, 0);
-        sigma_b.assign(m_k, 0);
-        sigma_x.assign(m_k, 0);
-        sigma_y.assign(m_k, 0);
-        clustersize.assign(m_k, 0);
-        {
-            int ind = 0;
-            for (int r = 0; r < m_height; r++)
-            {
-                for (int c = 0; c < m_width; c++)
-                {
-                    sigma_l[m_klabels[ind]] += m_channels[0].at<uchar>(ind);
-                    sigma_a[m_klabels[ind]] += m_channels[1].at<uchar>(ind);
-                    sigma_b[m_klabels[ind]] += m_channels[2].at<uchar>(ind);
-                    sigma_x[m_klabels[ind]] += c;
-                    sigma_y[m_klabels[ind]] += r;
-                    clustersize[m_klabels[ind]] += 1.0;
-                    ind++;
-                }
-            }
-        }
-
-        {
-            for (int k = 0; k < m_k; k++)
-            {
-                if (clustersize[k] <= 0)
-                    clustersize[k] = 1;
-                // computing inverse now to multiply, than divide later
-                inverses[k] = 1.0 / clustersize[k];
-            }
-        }
-
-        {
-            for (int k = 0; k < m_k; k++)
-            {
-                m_kseeds_l[k] = sigma_l[k] * inverses[k];
-                m_kseeds_a[k] = sigma_a[k] * inverses[k];
-                m_kseeds_b[k] = sigma_b[k] * inverses[k];
-                m_kseeds_x[k] = sigma_x[k] * inverses[k];
-                m_kseeds_y[k] = sigma_y[k] * inverses[k];
-            }
-        }
-    }
-}
-
-inline void SuperpixelSLIC::_enforce_connectivity()
-{
-    const int dx4[4] = {-1, 0, 1, 0};
-    const int dy4[4] = {0, -1, 0, 1};
-
-    for (int i = 0; i < m_img_size; i++)
-        m_klabels_connected[i] = -1;
-
-    int label = 0;
-    int *xvec = new int[m_img_size];
-    int *yvec = new int[m_img_size];
-    int oindex = 0;
-    int adjlabel = 0; //adjacent label
-    for (int j = 0; j < m_height; j++)
-    {
-        for (int k = 0; k < m_width; k++)
-        {
-            if (0 > m_klabels_connected[oindex])
-            {
-                m_klabels_connected[oindex] = label;
-                //--------------------
-                // Start a new segment
-                //--------------------
-                xvec[0] = k;
-                yvec[0] = j;
-                //-------------------------------------------------------
-                // Quickly find an adjacent label for use later if needed
-                //-------------------------------------------------------
-                {
-                    for (int n = 0; n < 4; n++)
-                    {
-                        int x = xvec[0] + dx4[n];
-                        int y = yvec[0] + dy4[n];
-                        if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
-                        {
-                            int nindex = y * m_width + x;
-                            if (m_klabels_connected[nindex] >= 0)
-                                adjlabel = m_klabels_connected[nindex];
-                        }
-                    }
-                }
-
-                int count = 1;
-                for (int c = 0; c < count; c++)
-                {
-                    for (int n = 0; n < 4; n++)
-                    {
-                        int x = xvec[c] + dx4[n];
-                        int y = yvec[c] + dy4[n];
-
-                        if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
-                        {
-                            int nindex = y * m_width + x;
-
-                            if (0 > m_klabels_connected[nindex] && m_klabels[oindex] == m_klabels[nindex])
-                            {
-                                xvec[count] = x;
-                                yvec[count] = y;
-                                m_klabels_connected[nindex] = label;
-                                count++;
-                            }
-                        }
-                    }
-                }
-                //-------------------------------------------------------
-                // If segment size is less then a limit, assign an
-                // adjacent label found before, and decrement label count.
-                //-------------------------------------------------------
-                if (count <= m_cluster_size >> 2)
-                {
-                    for (int c = 0; c < count; c++)
-                    {
-                        int ind = yvec[c] * m_width + xvec[c];
-                        m_klabels_connected[ind] = adjlabel;
-                    }
-                    label--;
-                }
-                label++;
-            }
-            oindex++;
-        }
-    }
-
-    if (xvec)
-        delete[] xvec;
-    if (yvec)
-        delete[] yvec;
-
-    // return label;
-}
-
-inline void SuperpixelSLIC::_draw_contours()
-{
-    const int dx8[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    const int dy8[8] = {0, -1, -1, -1, 0, 1, 1, 1};
-
-    vector<bool> istaken(m_img_size, false);
-    vector<int> contourx(m_img_size);
-    vector<int> contoury(m_img_size);
-    int mainindex = 0;
-    int cind = 0;
-    for (int j = 0; j < m_height; j++)
-    {
-        for (int k = 0; k < m_width; k++)
-        {
-            int np = 0;
-            for (int i = 0; i < 8; i++)
-            {
-                int x = k + dx8[i];
-                int y = j + dy8[i];
-
-                if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
-                {
-                    int index = y * m_width + x;
-
-                    //if( false == istaken[index] )//comment this to obtain internal contours
-                    {
-                        if (m_klabels[mainindex] != m_klabels[index])
-                            np++;
-                    }
-                }
-            }
-            if (np > 1)
-            {
-                contourx[cind] = k;
-                contoury[cind] = j;
-                istaken[mainindex] = true;
-                cind++;
-            }
-            mainindex++;
-        }
-    }
-
-    int numboundpix = cind;
-    for (int j = 0; j < numboundpix; j++)
-    {
-        int ii = contoury[j] * m_width + contourx[j];
-        m_img->at<uchar>(ii) = 0xff;
-
-        for (int n = 0; n < 8; n++)
-        {
-            int x = contourx[j] + dx8[n];
-            int y = contoury[j] + dy8[n];
-            if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
-            {
-                int ind = y * m_width + x;
-                if (!istaken[ind])
-                    m_img->at<uchar>(ind) = 0xff;
-            }
-        }
-    }
-}
-*/
