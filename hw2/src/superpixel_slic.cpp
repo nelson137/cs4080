@@ -24,12 +24,7 @@ SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
     m_cluster_size = 0.5 + double(m_img_size) / double(m_k);
     m_cluster_side_len = m_width / m_strip_size;
 
-    m_kseeds_l.resize(m_k);
-    m_kseeds_a.resize(m_k);
-    m_kseeds_b.resize(m_k);
-    m_kseeds_x.resize(m_k);
-    m_kseeds_y.resize(m_k);
-
+    m_kseeds.resize(m_k);
     m_labels.resize(m_img_size);
 
     _init_seeds();
@@ -59,12 +54,11 @@ inline void SuperpixelSLIC::_init_seeds()
             if (X > m_width - 1)
                 continue;
 
-            m_kseeds_l[i] = m_channels[0].at<uchar>(Y, X);
-            m_kseeds_a[i] = m_channels[1].at<uchar>(Y, X);
-            m_kseeds_b[i] = m_channels[2].at<uchar>(Y, X);
-
-            m_kseeds_x[i] = (double)X;
-            m_kseeds_y[i] = (double)Y;
+            m_kseeds[i] = {(double)m_channels[0].at<uchar>(Y, X),
+                           (double)m_channels[1].at<uchar>(Y, X),
+                           (double)m_channels[2].at<uchar>(Y, X),
+                           (double)X,
+                           (double)Y};
 
             i++;
         }
@@ -82,11 +76,7 @@ inline void SuperpixelSLIC::_iterations()
 {
     vector<double> clustersize(m_k, 0);
     vector<double> inverses(m_k, 0);
-    vector<double> sigma_l(m_k, 0);
-    vector<double> sigma_a(m_k, 0);
-    vector<double> sigma_b(m_k, 0);
-    vector<double> sigma_x(m_k, 0);
-    vector<double> sigma_y(m_k, 0);
+    vector<Seed> sigmas(m_k, {0.0, 0.0, 0.0, 0.0, 0.0});
     vector<double> dists(m_img_size, DBL_MAX);
 
     double inverse_weight = double(m_cluster_side_len * m_cluster_side_len) / double(m_cluster_side_len);
@@ -98,10 +88,10 @@ inline void SuperpixelSLIC::_iterations()
         dists.assign(m_img_size, DBL_MAX);
         for (int n = 0; n < m_k; n++)
         {
-            y1 = max(0.0, m_kseeds_y[n] - m_cluster_side_len);
-            y2 = min((double)m_height, m_kseeds_y[n] + m_cluster_side_len);
-            x1 = max(0.0, m_kseeds_x[n] - m_cluster_side_len);
-            x2 = min((double)m_width, m_kseeds_x[n] + m_cluster_side_len);
+            y1 = max(0.0, m_kseeds[n].y - m_cluster_side_len);
+            y2 = min((double)m_height, m_kseeds[n].y + m_cluster_side_len);
+            x1 = max(0.0, m_kseeds[n].x - m_cluster_side_len);
+            x2 = min((double)m_width, m_kseeds[n].x + m_cluster_side_len);
             for (int y = y1; y < y2; y++)
             {
                 for (int x = x1; x < x2; x++)
@@ -110,11 +100,11 @@ inline void SuperpixelSLIC::_iterations()
                     l = m_channels[0].at<uchar>(i);
                     a = m_channels[1].at<uchar>(i);
                     b = m_channels[2].at<uchar>(i);
-                    dist = (l - m_kseeds_l[n]) * (l - m_kseeds_l[n]) +
-                           (a - m_kseeds_a[n]) * (a - m_kseeds_a[n]) +
-                           (b - m_kseeds_b[n]) * (b - m_kseeds_b[n]);
-                    distxy = (x - m_kseeds_x[n]) * (x - m_kseeds_x[n]) +
-                             (y - m_kseeds_y[n]) * (y - m_kseeds_y[n]);
+                    dist = (l - m_kseeds[n].l) * (l - m_kseeds[n].l) +
+                           (a - m_kseeds[n].a) * (a - m_kseeds[n].a) +
+                           (b - m_kseeds[n].b) * (b - m_kseeds[n].b);
+                    distxy = (x - m_kseeds[n].x) * (x - m_kseeds[n].x) +
+                             (y - m_kseeds[n].y) * (y - m_kseeds[n].y);
 
                     //------------------------------------------------------------------------
                     dist += distxy * inverse_weight;
@@ -133,22 +123,19 @@ inline void SuperpixelSLIC::_iterations()
         //-----------------------------------------------------------------
         //instead of reassigning memory on each iteration, just reset.
 
-        sigma_l.assign(m_k, 0);
-        sigma_a.assign(m_k, 0);
-        sigma_b.assign(m_k, 0);
-        sigma_x.assign(m_k, 0);
-        sigma_y.assign(m_k, 0);
+        sigmas.assign(m_k, {0.0, 0.0, 0.0, 0.0, 0.0});
         clustersize.assign(m_k, 0);
         int ind = 0;
         for (int r = 0; r < m_height; r++)
         {
             for (int c = 0; c < m_width; c++)
             {
-                sigma_l[m_labels[ind]] += m_channels[0].at<uchar>(ind);
-                sigma_a[m_labels[ind]] += m_channels[1].at<uchar>(ind);
-                sigma_b[m_labels[ind]] += m_channels[2].at<uchar>(ind);
-                sigma_x[m_labels[ind]] += c;
-                sigma_y[m_labels[ind]] += r;
+                Seed &sigma = sigmas[m_labels[ind]];
+                sigma.l += m_channels[0].at<uchar>(ind);
+                sigma.a += m_channels[1].at<uchar>(ind);
+                sigma.b += m_channels[2].at<uchar>(ind);
+                sigma.x += c;
+                sigma.y += r;
                 clustersize[m_labels[ind]] += 1.0;
                 ind++;
             }
@@ -164,11 +151,13 @@ inline void SuperpixelSLIC::_iterations()
 
         for (int k = 0; k < m_k; k++)
         {
-            m_kseeds_l[k] = sigma_l[k] * inverses[k];
-            m_kseeds_a[k] = sigma_a[k] * inverses[k];
-            m_kseeds_b[k] = sigma_b[k] * inverses[k];
-            m_kseeds_x[k] = sigma_x[k] * inverses[k];
-            m_kseeds_y[k] = sigma_y[k] * inverses[k];
+            Seed &sigma = sigmas[k];
+            double inv = inverses[k];
+            m_kseeds[k] = {sigma.l * inv,
+                           sigma.a * inv,
+                           sigma.b * inv,
+                           sigma.x * inv,
+                           sigma.y * inv};
         }
     }
 }
@@ -259,10 +248,8 @@ inline void SuperpixelSLIC::_enforce_connectivity()
 
     m_labels = new_labels;
 
-    if (xvec)
-        delete[] xvec;
-    if (yvec)
-        delete[] yvec;
+    delete[] xvec;
+    delete[] yvec;
 }
 
 inline void SuperpixelSLIC::_draw_contours()

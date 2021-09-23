@@ -6,6 +6,11 @@
 using namespace std;
 using namespace cv;
 
+struct Seed
+{
+    double l, a, b, x, y;
+};
+
 class SuperpixelSLIC
 {
 private:
@@ -19,12 +24,7 @@ private:
     int m_width, m_height, m_img_size;
     int m_cluster_size, m_step, m_strip_size, m_cluster_side_len;
 
-    vector<double> m_kseeds_l;
-    vector<double> m_kseeds_a;
-    vector<double> m_kseeds_b;
-
-    vector<double> m_kseeds_x;
-    vector<double> m_kseeds_y;
+    vector<Seed> m_kseeds;
 
     vector<int> m_labels;
 
