@@ -16,13 +16,10 @@ SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
     m_runtime = 0.0;
 
     m_strip_size = int(sqrt(k));
-    m_n_channels = img->channels();
 
     m_width = img->size().width;
     m_height = img->size().height;
     m_img_size = m_width * m_height;
-
-    split(*img, m_channels);
 
     m_cluster_size = 0.5 + double(m_img_size) / double(m_k);
     m_cluster_side_len = m_width / m_strip_size;
@@ -60,9 +57,10 @@ inline void SuperpixelSLIC::_init_seeds()
             if (X > m_width - 1)
                 continue;
 
-            m_kseeds[i] = {(double)m_channels[0].at<uchar>(Y, X),
-                           (double)m_channels[1].at<uchar>(Y, X),
-                           (double)m_channels[2].at<uchar>(Y, X),
+            Vec3b point = m_img->at<Vec3b>(Y, X);
+            m_kseeds[i] = {(double)point(0),
+                           (double)point(1),
+                           (double)point(2),
                            (double)X,
                            (double)Y};
 
@@ -124,9 +122,10 @@ inline void SuperpixelSLIC::_iterations()
                 for (int x = x1; x < x2; x++)
                 {
                     int i = y * m_width + x;
-                    l = m_channels[0].at<uchar>(i);
-                    a = m_channels[1].at<uchar>(i);
-                    b = m_channels[2].at<uchar>(i);
+                    Vec3b point = m_img->at<Vec3b>(i);
+                    l = point(0);
+                    a = point(1);
+                    b = point(2);
                     dist = (l - m_kseeds[n].l) * (l - m_kseeds[n].l) +
                            (a - m_kseeds[n].a) * (a - m_kseeds[n].a) +
                            (b - m_kseeds[n].b) * (b - m_kseeds[n].b);
@@ -158,9 +157,10 @@ inline void SuperpixelSLIC::_iterations()
             for (int c = 0; c < m_width; c++)
             {
                 Seed &sigma = sigmas[m_labels[ind]];
-                sigma.l += m_channels[0].at<uchar>(ind);
-                sigma.a += m_channels[1].at<uchar>(ind);
-                sigma.b += m_channels[2].at<uchar>(ind);
+                Vec3b point = m_img->at<Vec3b>(ind);
+                sigma.l += point(0);
+                sigma.a += point(1);
+                sigma.b += point(2);
                 sigma.x += c;
                 sigma.y += r;
                 clustersize[m_labels[ind]] += 1.0;

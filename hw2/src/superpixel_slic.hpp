@@ -20,9 +20,6 @@ private:
 
     int m_k;
 
-    int m_n_channels;
-    vector<Mat> m_channels;
-
     int m_width, m_height, m_img_size;
     int m_cluster_size, m_step, m_strip_size, m_cluster_side_len;
 
