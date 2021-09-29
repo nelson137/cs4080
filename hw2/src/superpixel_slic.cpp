@@ -11,14 +11,19 @@
 using namespace std;
 using namespace cv;
 
-SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
+SuperpixelSLIC::SuperpixelSLIC(
+    const Mat *const img_in,
+    Mat *img_out,
+    int k,
+    int n_workers)
+    : m_img_in(img_in), m_img_out(img_out), m_k(k), m_n_workers(n_workers)
 {
     m_runtime = 0.0;
 
     m_strip_size = int(sqrt(k));
 
-    m_width = img->size().width;
-    m_height = img->size().height;
+    m_width = m_img_in->size().width;
+    m_height = m_img_in->size().height;
     m_img_size = m_width * m_height;
 
     m_cluster_size = 0.5 + double(m_img_size) / double(m_k);
@@ -57,7 +62,7 @@ inline void SuperpixelSLIC::_init_seeds()
             if (X > m_width - 1)
                 continue;
 
-            Vec3b point = m_img->at<Vec3b>(Y, X);
+            Vec3b point = m_img_in->at<Vec3b>(Y, X);
             m_kseeds[i] = {(double)point(0),
                            (double)point(1),
                            (double)point(2),
@@ -111,26 +116,27 @@ inline void SuperpixelSLIC::_iterations()
     for (int itr = 0; itr < 10; itr++)
     {
         dists.assign(m_img_size, DBL_MAX);
-        for (int n = 0; n < m_k; n++)
+        for (int k = 0; k < m_k; k++)
         {
-            y1 = max(0.0, m_kseeds[n].y - m_cluster_side_len);
-            y2 = min((double)m_height, m_kseeds[n].y + m_cluster_side_len);
-            x1 = max(0.0, m_kseeds[n].x - m_cluster_side_len);
-            x2 = min((double)m_width, m_kseeds[n].x + m_cluster_side_len);
+            Seed &seed = m_kseeds[k];
+            y1 = max(0.0, seed.y - m_cluster_side_len);
+            y2 = min((double)m_height, seed.y + m_cluster_side_len);
+            x1 = max(0.0, seed.x - m_cluster_side_len);
+            x2 = min((double)m_width, seed.x + m_cluster_side_len);
             for (int y = y1; y < y2; y++)
             {
                 for (int x = x1; x < x2; x++)
                 {
                     int i = y * m_width + x;
-                    Vec3b point = m_img->at<Vec3b>(i);
+                    Vec3b point = m_img_in->at<Vec3b>(i);
                     l = point(0);
                     a = point(1);
                     b = point(2);
-                    dist = (l - m_kseeds[n].l) * (l - m_kseeds[n].l) +
-                           (a - m_kseeds[n].a) * (a - m_kseeds[n].a) +
-                           (b - m_kseeds[n].b) * (b - m_kseeds[n].b);
-                    distxy = (x - m_kseeds[n].x) * (x - m_kseeds[n].x) +
-                             (y - m_kseeds[n].y) * (y - m_kseeds[n].y);
+                    dist = (l - seed.l) * (l - seed.l) +
+                           (a - seed.a) * (a - seed.a) +
+                           (b - seed.b) * (b - seed.b);
+                    distxy = (x - seed.x) * (x - seed.x) +
+                             (y - seed.y) * (y - seed.y);
 
                     //------------------------------------------------------------------------
                     dist += distxy * inverse_weight;
@@ -138,7 +144,7 @@ inline void SuperpixelSLIC::_iterations()
                     if (dist < dists[i])
                     {
                         dists[i] = dist;
-                        m_labels[i] = n;
+                        m_labels[i] = k;
                     }
                 }
             }
@@ -157,7 +163,7 @@ inline void SuperpixelSLIC::_iterations()
             for (int c = 0; c < m_width; c++)
             {
                 Seed &sigma = sigmas[m_labels[ind]];
-                Vec3b point = m_img->at<Vec3b>(ind);
+                Vec3b point = m_img_in->at<Vec3b>(ind);
                 sigma.l += point(0);
                 sigma.a += point(1);
                 sigma.b += point(2);
@@ -168,23 +174,28 @@ inline void SuperpixelSLIC::_iterations()
             }
         }
 
-        for (int k = 0; k < m_k; k++)
         {
-            if (clustersize[k] <= 0)
-                clustersize[k] = 1;
-            // computing inverse now to multiply, than divide later
-            inverses[k] = 1.0 / clustersize[k];
+            for (int k = 0; k < m_k; k++)
+            {
+                if (clustersize[k] <= 0)
+                    clustersize[k] = 1;
+                // computing inverse now to multiply later
+                inverses[k] = 1.0 / clustersize[k];
+            }
         }
 
-        for (int k = 0; k < m_k; k++)
         {
-            Seed &sigma = sigmas[k];
-            double inv = inverses[k];
-            m_kseeds[k] = {sigma.l * inv,
-                           sigma.a * inv,
-                           sigma.b * inv,
-                           sigma.x * inv,
-                           sigma.y * inv};
+            for (int k = 0; k < m_k; k++)
+            {
+                Seed &sigma = sigmas[k];
+                double inv = inverses[k];
+                m_kseeds[k] = {
+                    sigma.l * inv,
+                    sigma.a * inv,
+                    sigma.b * inv,
+                    sigma.x * inv,
+                    sigma.y * inv};
+            }
         }
     }
 }
@@ -323,7 +334,7 @@ inline void SuperpixelSLIC::_draw_contours()
     int numboundpix = cind;
     for (int j = 0; j < numboundpix; j++)
     {
-        m_img->at<Vec3b>(contour_y[j], contour_x[j]) = color_ffffff;
+        m_img_out->at<Vec3b>(contour_y[j], contour_x[j]) = color_ffffff;
         for (int n = 0; n < 8; n++)
         {
             int x = contour_x[j] + dx8[n];
@@ -333,7 +344,7 @@ inline void SuperpixelSLIC::_draw_contours()
                 int ind = y * m_width + x;
                 if (!is_taken[ind])
                 {
-                    m_img->at<Vec3b>(contour_y[j], contour_x[j]) = color_000000;
+                    m_img_out->at<Vec3b>(contour_y[j], contour_x[j]) = color_000000;
                 }
             }
         }

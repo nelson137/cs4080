@@ -16,9 +16,10 @@ class SuperpixelSLIC
 private:
     double m_runtime;
 
-    Mat *m_img;
+    const Mat *const m_img_in;
+    Mat *m_img_out;
 
-    int m_k;
+    int m_k, m_n_workers;
 
     int m_width, m_height, m_img_size;
     int m_cluster_size, m_step, m_strip_size, m_cluster_side_len;
@@ -28,7 +29,7 @@ private:
     vector<int> m_labels;
 
 public:
-    SuperpixelSLIC(Mat *img_in, int k);
+    SuperpixelSLIC(const Mat *const img_in, Mat *img_out, int k, int n_workers);
 
     SuperpixelSLIC(const SuperpixelSLIC &) = delete;
     SuperpixelSLIC(SuperpixelSLIC &&) = delete;

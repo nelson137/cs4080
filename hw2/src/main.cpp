@@ -69,25 +69,27 @@ int main(int argc, char *argv[])
      * Read the input image into memory
      */
 
-    Mat img_rgb, img_lab;
+    Mat img_rgb, img_lab_in;
     img_rgb = imread(infile, IMREAD_COLOR);
+
+    // Convert to CIELAB
+    cvtColor(img_rgb, img_lab_in, COLOR_BGR2Lab);
+
+    Mat img_lab_out = img_lab_in.clone();
 
     /**
      * Run the algorithm
      */
 
-    // Convert to CIELAB
-    cvtColor(img_rgb, img_lab, COLOR_BGR2Lab);
-
-    SuperpixelSLIC algo(&img_lab, n_clusters);
+    SuperpixelSLIC algo(&img_lab_in, &img_lab_out, n_clusters, n_workers);
     algo.run();
-
-    // Convert back to RGB
-    cvtColor(img_lab, img_rgb, COLOR_Lab2RGB);
 
     /**
      * Write the output image to filesystem
      */
+
+    // Convert back to RGB
+    cvtColor(img_lab_out, img_rgb, COLOR_Lab2RGB);
 
     if (!imwrite(outfile, img_rgb))
         die("failed to write output image to file: %s\n", outfile);
