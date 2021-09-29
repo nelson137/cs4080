@@ -14,6 +14,8 @@ struct Seed
 class SuperpixelSLIC
 {
 private:
+    double m_runtime;
+
     Mat *m_img;
 
     int m_k;

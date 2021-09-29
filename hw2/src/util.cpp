@@ -1,4 +1,5 @@
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <string>
 
@@ -8,6 +9,9 @@
 #include <sys/stat.h>
 
 #include "util.hpp"
+
+using namespace std;
+using namespace chrono;
 
 bool cstr_to_int(const char *s, int *i)
 {
@@ -36,4 +40,21 @@ bool is_perfect_square(int i)
         return false;
     double root = sqrt((double)i);
     return root * root == (double)i;
+}
+
+system_clock::time_point _t_start, _t_end;
+
+void timer_start()
+{
+    _t_start = system_clock::now();
+}
+
+void timer_end()
+{
+    _t_end = system_clock::now();
+}
+
+double timer_duration()
+{
+    return duration_cast<microseconds>(_t_end - _t_start).count() / 1000.0;
 }

@@ -4,6 +4,7 @@
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include "superpixel_slic.hpp"
+#include "util.hpp"
 
 #define COMPACTNESS 20.0
 
@@ -12,6 +13,8 @@ using namespace cv;
 
 SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
 {
+    m_runtime = 0.0;
+
     m_strip_size = int(sqrt(k));
     m_n_channels = img->channels();
 
@@ -27,7 +30,10 @@ SuperpixelSLIC::SuperpixelSLIC(Mat *img, int k) : m_img(img), m_k(k)
     m_kseeds.resize(m_k);
     m_labels.resize(m_img_size);
 
+    timer_start();
     _init_seeds();
+    timer_end();
+    cout << "seed init time: " << timer_duration() << " ms" << endl;
 }
 
 inline void SuperpixelSLIC::_init_seeds()
@@ -67,9 +73,30 @@ inline void SuperpixelSLIC::_init_seeds()
 
 void SuperpixelSLIC::run()
 {
+    double t;
+
+    timer_start();
     _iterations();
+    timer_end();
+    t = timer_duration();
+    cout << "iterations time: " << t << " ms" << endl;
+    m_runtime += t;
+
+    timer_start();
     _enforce_connectivity();
+    timer_end();
+    t = timer_duration();
+    cout << "enforce connectivity time: " << t << " ms" << endl;
+    m_runtime += t;
+
+    timer_start();
     _draw_contours();
+    timer_end();
+    t = timer_duration();
+    cout << "drawing contours time: " << t << " ms" << endl;
+    m_runtime += t;
+
+    cout << "total runtime: " << m_runtime << " ms" << endl;
 }
 
 inline void SuperpixelSLIC::_iterations()
