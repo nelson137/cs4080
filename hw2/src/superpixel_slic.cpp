@@ -1,11 +1,23 @@
 #include <iostream>
 
+#include <errno.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include "superpixel_slic.hpp"
 #include "util.hpp"
 
+#define N_ITERATIONS 10
+#define SHM_KEY 12550087
+#define SHM_FLAGS 0644 | IPC_CREAT | IPC_EXCL
 #define COMPACTNESS 20.0
 
 using namespace std;
@@ -30,12 +42,46 @@ SuperpixelSLIC::SuperpixelSLIC(
     m_cluster_side_len = m_width / m_strip_size;
 
     m_kseeds.resize(m_k);
-    m_labels.resize(m_img_size);
+
+    size_t shm_size = sizeof(sem_t *) + (sizeof(int) * m_img_size) + (sizeof(double) * m_img_size);
+    if ((m_shared_mem_id = shmget(SHM_KEY, shm_size, SHM_FLAGS)) < 0)
+    {
+        if (errno == EEXIST)
+        {
+            if ((m_shared_mem_id = shmget(SHM_KEY, 0, 0644)) < 0)
+                perror_die("shared memory already exists, failed to get its ID");
+            if (shmctl(m_shared_mem_id, IPC_RMID, nullptr) < 0)
+                perror_die("shared memory already exists, failed to remove it");
+            if ((m_shared_mem_id = shmget(SHM_KEY, shm_size, SHM_FLAGS)) < 0)
+                perror_die("shared memory already existed and was deleted, failed to create new one");
+        }
+        else
+        {
+            perror_die("failed to create shared memory");
+        }
+    }
+    if ((m_shared_mem_buf = shmat(m_shared_mem_id, nullptr, 0)) == (void *)-1)
+        perror_die("failed to attach shared memory");
+
+    // Setup mutex for seeds in shared memory
+    m_mutex = (sem_t *)m_shared_mem_buf;
+    if (sem_init(m_mutex, 1, 1) < 0)
+        die("failed to create semaphore: m_mutex");
+
+    m_labels = (int *)(m_mutex + 1);
+    m_dists = (double *)(m_labels + m_img_size);
 
     timer_start();
     _init_seeds();
     timer_end();
     cout << "seed init time: " << timer_duration() << " ms" << endl;
+}
+
+SuperpixelSLIC::~SuperpixelSLIC()
+{
+    sem_destroy(m_mutex);
+    shmdt(m_shared_mem_buf);
+    shmctl(m_shared_mem_id, IPC_RMID, nullptr);
 }
 
 inline void SuperpixelSLIC::_init_seeds()
@@ -107,47 +153,102 @@ inline void SuperpixelSLIC::_iterations()
     vector<double> clustersize(m_k, 0);
     vector<double> inverses(m_k, 0);
     vector<Seed> sigmas(m_k, {0.0, 0.0, 0.0, 0.0, 0.0});
-    vector<double> dists(m_img_size, DBL_MAX);
+    // vector<double> m_dists(m_img_size, DBL_MAX);
 
     double inverse_weight = double(m_cluster_side_len * m_cluster_side_len) / double(m_cluster_side_len);
-    int x1, y1, x2, y2;
-    double l, a, b, dist, distxy;
 
-    for (int itr = 0; itr < 10; itr++)
+    // Must be non-zero so the main proc doesn't _exit() when m_n_workers==1
+    pid_t pid = 1;
+
+    vector<pid_t> worker_pids;
+    worker_pids.reserve(m_n_workers - 1);
+    int clusters_per_worker = m_k / m_n_workers;
+
+    int k_start = 0, k_end = clusters_per_worker;
+
+    for (int itr = 0; itr < N_ITERATIONS; itr++)
     {
-        dists.assign(m_img_size, DBL_MAX);
-        for (int k = 0; k < m_k; k++)
+        // m_dists.assign(m_img_size, DBL_MAX);
+        for (int i = 0; i < m_img_size; i++)
+            m_dists[i] = DBL_MAX;
+        worker_pids.clear();
+
+        // Create workers with fork() and start jobs
+        // Note: m_n_workers-1 workers are forked because main thread is a
+        // worker too.
+        int i;
+        for (i = 1; i < m_n_workers; i++)
+        {
+            pid = fork();
+            if (pid < 0)
+            {
+                // Error
+                die("failed to fork");
+            }
+            else if (pid > 0)
+            {
+                // Parent
+                worker_pids.push_back(pid);
+            }
+            else
+            {
+                // Child
+                k_start = i * clusters_per_worker;
+                k_end = k_start + clusters_per_worker;
+                break;
+            }
+        }
+
+        // Do work, different set of `k`s for each worker
+        for (int k = k_start; k < k_end; k++)
         {
             Seed &seed = m_kseeds[k];
-            y1 = max(0.0, seed.y - m_cluster_side_len);
-            y2 = min((double)m_height, seed.y + m_cluster_side_len);
-            x1 = max(0.0, seed.x - m_cluster_side_len);
-            x2 = min((double)m_width, seed.x + m_cluster_side_len);
+            int y1 = max(0.0, seed.y - m_cluster_side_len);
+            int y2 = min((double)m_height, seed.y + m_cluster_side_len);
+            int x1 = max(0.0, seed.x - m_cluster_side_len);
+            int x2 = min((double)m_width, seed.x + m_cluster_side_len);
             for (int y = y1; y < y2; y++)
             {
                 for (int x = x1; x < x2; x++)
                 {
                     int i = y * m_width + x;
                     Vec3b point = m_img_in->at<Vec3b>(i);
-                    l = point(0);
-                    a = point(1);
-                    b = point(2);
-                    dist = (l - seed.l) * (l - seed.l) +
-                           (a - seed.a) * (a - seed.a) +
-                           (b - seed.b) * (b - seed.b);
-                    distxy = (x - seed.x) * (x - seed.x) +
-                             (y - seed.y) * (y - seed.y);
+                    double l = point(0);
+                    double a = point(1);
+                    double b = point(2);
+                    double dist = (l - seed.l) * (l - seed.l) +
+                                  (a - seed.a) * (a - seed.a) +
+                                  (b - seed.b) * (b - seed.b);
+                    double distxy = (x - seed.x) * (x - seed.x) +
+                                    (y - seed.y) * (y - seed.y);
 
                     //------------------------------------------------------------------------
                     dist += distxy * inverse_weight;
                     //------------------------------------------------------------------------
-                    if (dist < dists[i])
+                    sem_wait(m_mutex);
+                    if (dist < m_dists[i])
                     {
-                        dists[i] = dist;
+                        m_dists[i] = dist;
                         m_labels[i] = k;
                     }
+                    sem_post(m_mutex);
                 }
             }
+        }
+
+        // Kill all _forked_ workers, but not the main one
+        // Note: fork() sets `pid` 0 in child procs, but the parent gets the
+        // created pid, so the parent is the only one with a non-zero value for
+        // `pid`, and, thus, the only one that won't _exit().
+        if (pid == 0)
+            _exit(0);
+
+        // Wait for all workers to finish
+        // Note: should only happen in main because of above _exit().
+        for (const pid_t &pid : worker_pids)
+        {
+            int code;
+            waitpid(pid, &code, 0);
         }
 
         //-----------------------------------------------------------------
@@ -205,7 +306,7 @@ inline void SuperpixelSLIC::_enforce_connectivity()
     const int dx4[4] = {-1, 0, 1, 0};
     const int dy4[4] = {0, -1, 0, 1};
 
-    vector<int> new_labels(m_labels.size(), 0);
+    int *new_labels = new int[m_img_size];
     for (int i = 0; i < m_img_size; i++)
         new_labels[i] = -1;
 
@@ -284,8 +385,9 @@ inline void SuperpixelSLIC::_enforce_connectivity()
         }
     }
 
-    m_labels = new_labels;
+    memcpy(m_labels, new_labels, sizeof(int) * m_img_size);
 
+    delete[] new_labels;
     delete[] xvec;
     delete[] yvec;
 }

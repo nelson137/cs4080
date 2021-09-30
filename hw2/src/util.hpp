@@ -5,6 +5,8 @@ bool cstr_to_int(const char *s, int *i);
 
 void die(const char *fmt, ...);
 
+void perror_die(const char *msg);
+
 bool file_exists(const char *path_);
 
 bool is_perfect_square(int i);

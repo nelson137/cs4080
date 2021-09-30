@@ -63,6 +63,9 @@ int main(int argc, char *argv[])
         die("invalid number of superpixel clusters, not a perfect square: %d",
             n_clusters);
 
+    if (n_clusters % n_workers)
+        die("number of workers must evenly divide number of superpixel clusters");
+
     const char *outfile = argv[4];
 
     /**
