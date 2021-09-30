@@ -48,19 +48,19 @@ int main(int argc, char *argv[])
 
     const char *infile = argv[1];
     if (!file_exists(infile))
-        die("no such file: %s\n", infile);
+        die("no such file: %s", infile);
 
     const char *n_workers_str = argv[2];
     int n_workers = 1;
     if (!cstr_to_int(n_workers_str, &n_workers))
-        die("invalid number of workers: %s\n", n_workers_str);
+        die("invalid number of workers: %s", n_workers_str);
 
     const char *n_clusters_str = argv[3];
     int n_clusters = 256;
     if (!cstr_to_int(n_clusters_str, &n_clusters))
-        die("invalid number of superpixel clusters: %s\n", n_clusters_str);
+        die("invalid number of superpixel clusters: %s", n_clusters_str);
     if (!is_perfect_square(n_clusters))
-        die("invalid number of superpixel clusters, not a perfect square: %d\n",
+        die("invalid number of superpixel clusters, not a perfect square: %d",
             n_clusters);
 
     const char *outfile = argv[4];
@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
     cvtColor(img_lab_out, img_rgb, COLOR_Lab2RGB);
 
     if (!imwrite(outfile, img_rgb))
-        die("failed to write output image to file: %s\n", outfile);
+        die("failed to write output image to file: %s", outfile);
 
     return 0;
 }
