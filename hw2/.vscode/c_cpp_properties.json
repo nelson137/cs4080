@@ -1,0 +1,21 @@
+{
+    "version": 4,
+    "env": {
+        "myIncludes": [
+            "${workspaceFolder}/src",
+            "/usr/local/include/opencv4"
+        ]
+    },
+    "configurations": [
+        {
+            "name": "Laptop",
+            "intelliSenseMode": "gcc-x64",
+            "includePath": [
+                "${myIncludes}"
+            ],
+            "cppStandard": "gnu++14",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "configurationProvider": "ms-vscode.cmake-tools"
+        }
+    ]
+}
