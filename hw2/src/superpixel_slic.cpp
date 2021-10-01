@@ -199,14 +199,18 @@ inline void SuperpixelSLIC::_iterations()
             }
         }
 
+        vector<DistChange> dist_changes(m_width);
+
         // Do work, different set of `k`s for each worker
         for (int k = k_start; k < k_end; k++)
         {
             Seed &seed = m_kseeds[k];
+
             int y1 = max(0.0, seed.y - m_cluster_side_len);
             int y2 = min((double)m_height, seed.y + m_cluster_side_len);
             int x1 = max(0.0, seed.x - m_cluster_side_len);
             int x2 = min((double)m_width, seed.x + m_cluster_side_len);
+
             for (int y = y1; y < y2; y++)
             {
                 for (int x = x1; x < x2; x++)
@@ -225,14 +229,21 @@ inline void SuperpixelSLIC::_iterations()
                     //------------------------------------------------------------------------
                     dist += distxy * inverse_weight;
                     //------------------------------------------------------------------------
-                    sem_wait(m_mutex);
-                    if (dist < m_dists[i])
-                    {
-                        m_dists[i] = dist;
-                        m_labels[i] = k;
-                    }
-                    sem_post(m_mutex);
+
+                    dist_changes[x] = {dist, k, i};
                 }
+
+                sem_wait(m_mutex);
+                for (int x = x1; x < x2; x++)
+                {
+                    DistChange dc = dist_changes[x];
+                    if (dc.dist < m_dists[dc.i])
+                    {
+                        m_dists[dc.i] = dc.dist;
+                        m_labels[dc.i] = dc.label;
+                    }
+                }
+                sem_post(m_mutex);
             }
         }
 

@@ -53,4 +53,11 @@ public:
     void run();
 };
 
+struct DistChange
+{
+    double dist;
+    int label;
+    int i;
+};
+
 #endif
