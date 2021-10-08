@@ -36,8 +36,13 @@ SuperpixelSLIC::SuperpixelSLIC(
     m_cluster_side_len = m_width / m_strip_size;
 
     m_kseeds.reserve(m_k);
-    m_labels.reserve(m_img_size);
-    m_dists.resize(m_img_size, DBL_MAX);
+
+    m_labels.resize(m_height);
+    for (int r = 0; r < m_height; r++)
+        m_labels[r].assign(m_width, -1);
+
+    m_dists.resize(m_height);
+    // Values reset before each iteration
 
     timer_start();
     _init_seeds();
@@ -121,8 +126,8 @@ inline void SuperpixelSLIC::_iterations()
 
     for (int itr = 0; itr < N_ITERATIONS; itr++)
     {
-        for (int i = 0; i < m_img_size; i++)
-            m_dists[i] = DBL_MAX;
+        for (int r = 0; r < m_height; r++)
+            m_dists[r].assign(m_width, DBL_MAX);
 
         // Create worker threads and start jobs
         // Note: main thread is not a worker, m_n_workers workers are spawned
@@ -151,14 +156,14 @@ inline void SuperpixelSLIC::_iterations()
         {
             for (int c = 0; c < m_width; c++)
             {
-                Seed &sigma = sigmas[m_labels[ind]];
+                Seed &sigma = sigmas[m_labels[r][c]];
                 Vec3b point = m_img_in->at<Vec3b>(ind);
                 sigma.l += point(0);
                 sigma.a += point(1);
                 sigma.b += point(2);
                 sigma.x += c;
                 sigma.y += r;
-                clustersize[m_labels[ind]] += 1.0;
+                clustersize[m_labels[r][c]] += 1.0;
                 ind++;
             }
         }
@@ -224,18 +229,19 @@ inline void SuperpixelSLIC::_iterations_worker(int k_start, int k_end)
                 dist += distxy * inverse_weight;
                 //------------------------------------------------------------------------
 
-                dist_changes[x] = {dist, k, i};
+                dist_changes[x] = {dist, k, x};
             }
 
             {
-                lock_guard<mutex> _(m_mutex);
+                lock_guard<mutex> lg1 = m_dists[y].get_lock_guard();
+                lock_guard<mutex> lg2 = m_labels[y].get_lock_guard();
                 for (int x = x1; x < x2; x++)
                 {
                     DistChange dc = dist_changes[x];
-                    if (dc.dist < m_dists[dc.i])
+                    if (dc.dist < m_dists[y][dc.x])
                     {
-                        m_dists[dc.i] = dc.dist;
-                        m_labels[dc.i] = dc.label;
+                        m_dists[y][dc.x] = dc.dist;
+                        m_labels[y][dc.x] = dc.label;
                     }
                 }
             }
@@ -248,7 +254,9 @@ inline void SuperpixelSLIC::_enforce_connectivity()
     const int dx4[4] = {-1, 0, 1, 0};
     const int dy4[4] = {0, -1, 0, 1};
 
-    vector<int> new_labels(m_img_size, -1);
+    vector<vector<int>> new_labels(m_height);
+    for (int i = 0; i < m_height; i++)
+        new_labels[i].resize(m_width, -1);
 
     vector<int> xvec;
     xvec.reserve(m_img_size);
@@ -262,9 +270,11 @@ inline void SuperpixelSLIC::_enforce_connectivity()
     {
         for (int k = 0; k < m_width; k++)
         {
-            if (0 > new_labels[oindex])
+            int o_y = oindex / m_width;
+            int o_x = oindex % m_width;
+            if (0 > new_labels[o_y][o_x])
             {
-                new_labels[oindex] = label;
+                new_labels[o_y][o_x] = label;
                 //--------------------
                 // Start a new segment
                 //--------------------
@@ -280,9 +290,8 @@ inline void SuperpixelSLIC::_enforce_connectivity()
                         int y = yvec[0] + dy4[n];
                         if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
                         {
-                            int nindex = y * m_width + x;
-                            if (new_labels[nindex] >= 0)
-                                adjlabel = new_labels[nindex];
+                            if (new_labels[y][x] >= 0)
+                                adjlabel = new_labels[y][x];
                         }
                     }
                 }
@@ -297,13 +306,11 @@ inline void SuperpixelSLIC::_enforce_connectivity()
 
                         if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
                         {
-                            int nindex = y * m_width + x;
-
-                            if (0 > new_labels[nindex] && m_labels[oindex] == m_labels[nindex])
+                            if (0 > new_labels[y][x] && m_labels[o_y][o_x] == m_labels[y][x])
                             {
                                 xvec[count] = x;
                                 yvec[count] = y;
-                                new_labels[nindex] = label;
+                                new_labels[y][x] = label;
                                 count++;
                             }
                         }
@@ -317,8 +324,7 @@ inline void SuperpixelSLIC::_enforce_connectivity()
                 {
                     for (int c = 0; c < count; c++)
                     {
-                        int ind = yvec[c] * m_width + xvec[c];
-                        new_labels[ind] = adjlabel;
+                        new_labels[yvec[c]][xvec[c]] = adjlabel;
                     }
                     label--;
                 }
@@ -328,7 +334,8 @@ inline void SuperpixelSLIC::_enforce_connectivity()
         }
     }
 
-    m_labels = new_labels;
+    for (int i = 0; i < m_height; i++)
+        m_labels[i].assign(new_labels[i].begin(), new_labels[i].end());
 }
 
 inline void SuperpixelSLIC::_draw_contours()
@@ -338,7 +345,9 @@ inline void SuperpixelSLIC::_draw_contours()
     static const Vec3b color_ffffff = Vec3b(0xff, 0xff, 0xff);
     static const Vec3b color_000000 = Vec3b(0x00, 0x00, 0x00);
 
-    vector<bool> is_taken(m_img_size, false);
+    vector<vector<bool>> is_taken(m_height);
+    for (int r = 0; r < m_height; r++)
+        is_taken[r].assign(m_width, false);
     vector<int> contour_x(m_img_size);
     vector<int> contour_y(m_img_size);
 
@@ -353,19 +362,14 @@ inline void SuperpixelSLIC::_draw_contours()
             {
                 int x = k + dx8[i];
                 int y = j + dy8[i];
-
-                if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
-                {
-                    int index = y * m_width + x;
-                    if (m_labels[mainindex] != m_labels[index])
-                        np++;
-                }
+                if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height) && m_labels[j][k] != m_labels[y][x])
+                    np++;
             }
             if (np > 1)
             {
                 contour_x[cind] = k;
                 contour_y[cind] = j;
-                is_taken[mainindex] = true;
+                is_taken[j][k] = true;
                 cind++;
             }
             mainindex++;
@@ -380,13 +384,9 @@ inline void SuperpixelSLIC::_draw_contours()
         {
             int x = contour_x[j] + dx8[n];
             int y = contour_y[j] + dy8[n];
-            if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height))
+            if ((x >= 0 && x < m_width) && (y >= 0 && y < m_height) && !is_taken[y][x])
             {
-                int ind = y * m_width + x;
-                if (!is_taken[ind])
-                {
-                    m_img_out->at<Vec3b>(contour_y[j], contour_x[j]) = color_000000;
-                }
+                m_img_out->at<Vec3b>(contour_y[j], contour_x[j]) = color_000000;
             }
         }
     }
