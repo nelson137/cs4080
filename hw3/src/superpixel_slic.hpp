@@ -1,7 +1,6 @@
 #ifndef _SUPERPIXEL_SLIC_HPP
 #define _SUPERPIXEL_SLIC_HPP
 
-#include <memory>
 #include <mutex>
 
 #include <opencv2/core/mat.hpp>
@@ -14,31 +13,13 @@ struct Seed
     double l, a, b, x, y;
 };
 
-template <typename T>
-class LockableRow : public vector<T>
+struct DistChange
 {
-private:
-    unique_ptr<mutex> m_mutex;
+    double dist;
+    int label;
 
-public:
-    // Default constructor
-    LockableRow() : vector<T>::vector()
-    {
-        m_mutex = unique_ptr<mutex>(new mutex{});
-    }
-
-    // Delete copy constructors
-    LockableRow(const LockableRow &) = delete;
-    LockableRow &operator=(const LockableRow &) = delete;
-
-    // Move constructors
-    LockableRow(LockableRow &&other) { m_mutex = move(other.m_mutex); }
-    LockableRow &operator=(LockableRow &&other) { m_mutex = other.m_mutex; }
-
-    inline lock_guard<mutex> get_lock_guard()
-    {
-        return lock_guard<mutex>(*m_mutex.get());
-    }
+    DistChange() : dist(DBL_MAX), label(-1) {}
+    DistChange(double d, int l) : dist(d), label(l) {}
 };
 
 class SuperpixelSLIC
@@ -56,8 +37,7 @@ private:
 
     vector<Seed> m_kseeds;
 
-    vector<LockableRow<int>> m_labels;
-    vector<LockableRow<double>> m_dists;
+    vector<int> m_labels;
 
 public:
     SuperpixelSLIC(const Mat *const img_in, Mat *img_out, int k, int n_workers);
@@ -69,19 +49,12 @@ public:
 private:
     void _init_seeds();
     void _iterations();
-    void _iterations_worker(int k_start, int k_end);
+    void _iterations_worker(int k_start, int k_end, vector<DistChange> &dists);
     void _enforce_connectivity();
     void _draw_contours();
 
 public:
     void run();
-};
-
-struct DistChange
-{
-    double dist;
-    int label;
-    int x;
 };
 
 #endif
