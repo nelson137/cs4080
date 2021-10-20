@@ -1,0 +1,11 @@
+{
+    "cmake.debugConfig": {
+        "cwd": "${workspaceFolder}/build",
+        "args": [
+            "../../Astronaught.png",
+            "4",
+            "256",
+            "out.png"
+        ]
+    }
+}
