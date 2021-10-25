@@ -1,7 +1,9 @@
-#include <cmath>
 #include <chrono>
+#include <cmath>
 #include <iostream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <stdarg.h>
 #include <string.h>
@@ -52,19 +54,21 @@ bool is_perfect_square(int i)
     return root * root == (double)i;
 }
 
-system_clock::time_point _t_start, _t_end;
+vector<system_clock::time_point> _t_times;
 
 void timer_start()
 {
-    _t_start = system_clock::now();
+    auto it = _t_times.emplace(_t_times.cend());
+    *it = system_clock::now();
 }
 
-void timer_end()
+double timer_end()
 {
-    _t_end = system_clock::now();
-}
-
-double timer_duration()
-{
-    return duration_cast<microseconds>(_t_end - _t_start).count() / 1000.0;
+    system_clock::time_point end = system_clock::now();
+    if (_t_times.size() == 0)
+        throw runtime_error(
+            "called timer_end() without a previous call of timer_start()");
+    system_clock::time_point start = _t_times.back();
+    _t_times.pop_back();
+    return duration_cast<microseconds>(end - start).count() / 1000.0;
 }

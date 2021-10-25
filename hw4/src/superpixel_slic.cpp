@@ -40,8 +40,8 @@ SuperpixelSLIC::SuperpixelSLIC(
 
     timer_start();
     _init_seeds();
-    timer_end();
-    cout << "seed init time: " << timer_duration() << " ms" << endl;
+    double t = timer_end();
+    cout << "seed init time: " << t << " ms" << endl;
 }
 
 inline void SuperpixelSLIC::_init_seeds()
@@ -86,22 +86,19 @@ void SuperpixelSLIC::run()
 
     timer_start();
     _iterations();
-    timer_end();
-    t = timer_duration();
+    t = timer_end();
     cout << "iterations time: " << t << " ms" << endl;
     m_runtime += t;
 
     timer_start();
     _enforce_connectivity();
-    timer_end();
-    t = timer_duration();
+    t = timer_end();
     cout << "enforce connectivity time: " << t << " ms" << endl;
     m_runtime += t;
 
     timer_start();
     _draw_contours();
-    timer_end();
-    t = timer_duration();
+    t = timer_end();
     cout << "drawing contours time: " << t << " ms" << endl;
     m_runtime += t;
 
