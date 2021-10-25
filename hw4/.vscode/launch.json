@@ -1,0 +1,53 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "n_workers",
+            "description": "The number of workers",
+            "type": "pickString",
+            "options": [
+                "1",
+                "2",
+                "4",
+                "8"
+            ]
+        },
+        {
+            "id": "n_clusters",
+            "description": "The number of clusters",
+            "type": "pickString",
+            "options": [
+                "64",
+                "128",
+                "256",
+                "400"
+            ],
+            "default": "400"
+        }
+    ],
+    "configurations": [
+        {
+            "name": "Linux",
+            "type": "cppdbg",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/build",
+            "program": "${workspaceFolder}/build/homework3",
+            "args": [
+                "../../Astronaught.png",
+                "${input:n_workers}",
+                "${input:n_clusters}",
+                "out.png"
+            ],
+            "stopOnEntry": false,
+            "setupCommands": [
+                {
+                    "text": "-enable-pretty-printing",
+                    "description": "Enable GDB pretty printing"
+                }
+            ]
+        }
+    ]
+}
