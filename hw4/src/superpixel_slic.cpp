@@ -229,9 +229,6 @@ inline void SuperpixelSLIC_MPI::_worker_main(int rank)
         MPI_Reduce(worker_dists, min_distchanges, m_img_size, DistChange_T,
                    DistChange_Op_min, RANK_MAIN, MPI_COMM_WORLD);
 
-        // Wait for all workers to call reduce with their calculated dists
-        MPI_Barrier(MPI_COMM_WORLD);
-
         if (rank == RANK_MAIN)
         {
             //------------------------------------------------------------
