@@ -182,21 +182,11 @@ inline void SuperpixelSLIC_MPI::_worker_main(int rank)
             // _W_DEBUG(rank, "::: itr " << itr << " :::" << endl);
             // Copy latest seeds into main worker's buffer
             memcpy(worker_seeds, m_kseeds, sizeof(Seed) * m_k);
-            // Send latest seeds to all *other* workers
-            for (int w = 1; w < m_n_workers; w++)
-            {
-                // TODO: use MPI_Bcast
-                // _W_DEBUG(rank, "send seeds -> " << _W(w) << endl);
-                MPI_Send(m_kseeds, m_k, Seed_T, w, TAG_SEEDS, MPI_COMM_WORLD);
-            }
         }
-        else
-        {
-            // Acts like barrier, workers block until a message is in the queue
-            MPI_Recv(worker_seeds, m_k, Seed_T, RANK_MAIN, TAG_SEEDS,
-                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            // _W_DEBUG(rank, "recv seeds <- " << _W(RANK_MAIN) << endl);
-        }
+
+        // Send latest seeds to all workers
+        MPI_Bcast(worker_seeds, m_k, Seed_T, RANK_MAIN, MPI_COMM_WORLD);
+        // _W_DEBUG(rank, "broadcast seeds -> " << _W(w) << endl);
 
         //------------------------------------------------------------
         // Calculate distances
