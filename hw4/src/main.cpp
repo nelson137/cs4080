@@ -1,5 +1,6 @@
 #include <iostream>
 
+#include <mpi.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -9,6 +10,15 @@
 
 using namespace std;
 using namespace cv;
+
+#ifdef DEBUG
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+using namespace chrono;
+#endif
+
+#define W_TAG 0
 
 const char *ARG0 = "hw2";
 
@@ -34,6 +44,15 @@ ARGUMENTS\n\
 ";
     exit(code);
 }
+
+#ifdef DEBUG
+extern "C" const char *__asan_default_options()
+{
+    // There is a lot of output for leaks detected in MPI_* functions, so just
+    // turn them all off and use Valgrind.
+    return "detect_leaks=0";
+}
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -84,8 +103,72 @@ int main(int argc, char *argv[])
      * Run the algorithm
      */
 
-    SuperpixelSLIC algo(&img_lab_in, &img_lab_out, n_clusters, n_workers);
-    algo.run();
+    int rank;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    // Create Seed datatype
+    {
+        // This is a lot easier than using MPI_Type_create_struct() to create
+        // a type that mimics the struct, then MPI_Type_create_resized() to take
+        // padding into account. This also continues to work without needing
+        // modification if the fields of the type were to change.
+        MPI_Type_contiguous(sizeof(Seed), MPI_BYTE, &Seed_T);
+        MPI_Type_commit(&Seed_T);
+        int size;
+        MPI_Type_size(Seed_T, &size);
+        assert(size == sizeof(Seed));
+    }
+
+    // Create DistChange datatype
+    {
+        MPI_Type_contiguous(sizeof(DistChange), MPI_BYTE, &DistChange_T);
+        MPI_Type_commit(&DistChange_T);
+        int size;
+        MPI_Type_size(DistChange_T, &size);
+        assert(size == sizeof(DistChange));
+    }
+
+    // Create DistChange reduction operation
+    MPI_Op_create(
+        (MPI_User_function *)DistChange_Op_min_impl, true, &DistChange_Op_min);
+
+#ifdef DEBUG
+    /**
+     * Infinite loop waiting for debugger to attach.
+     *
+     * When using mpirun, there is no way to launch with a debugger, so it must
+     * be attached to the running process. Loop indefinitely until a debugger is
+     * attached and the value of the continue flag is manually changed to true.
+     *
+     * This can be a little flakey, sometimes the debugger attaches but doesn't
+     * stop on the breakpoint. Just stop the debugger, interrupt mpirun with
+     * ^C, and try again. It has never not worked the second time for me.
+     */
+
+    if (getenv("WAIT_FOR_DEBUGGER_ATTACH") != nullptr)
+    {
+        static const char *const WAIT_FOR_DEBUGGER_ATTACH_NOTE =
+            "Infinite loop waiting for debugger to attach; in order to\n"
+            "continue, flag must be manually set to true.\n\n"
+            "NOTE: VS Code *must* be run with administrative privileges\n"
+            "      in order to attach the debugger to a running process.\n\n";
+        if (rank == RANK_MAIN)
+            cerr << WAIT_FOR_DEBUGGER_ATTACH_NOTE;
+
+        bool a000_continue = false;
+        while (!a000_continue)
+            this_thread::sleep_for(milliseconds(100));
+    }
+#endif
+
+    SuperpixelSLIC_MPI algo(&img_lab_in, &img_lab_out, n_clusters, n_workers);
+    algo.init(rank);
+    algo.run(rank);
+
+    MPI_Finalize();
+    if (rank != RANK_MAIN)
+        return 0;
 
     /**
      * Write the output image to filesystem

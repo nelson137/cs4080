@@ -1,0 +1,158 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cmake build",
+            "type": "cmake",
+            "command": "build",
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "kill zombies",
+            "type": "shell",
+            "command": "pkill homework4; :",
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "run 2/64",
+            "dependsOn": "kill zombies",
+            "type": "process",
+            "command": "mpirun",
+            "args": [
+                "-np",
+                "2",
+                "./homework4",
+                "../../Astronaught.png",
+                "2",
+                "64",
+                "./out.png"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "run 2/64 (attach debugger)",
+            "dependsOn": "kill zombies",
+            "type": "process",
+            "command": "mpirun",
+            "args": [
+                "-np",
+                "2",
+                "./homework4",
+                "../../Astronaught.png",
+                "2",
+                "64",
+                "./out.png"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build",
+                "env": {
+                    "WAIT_FOR_DEBUGGER_ATTACH": ""
+                }
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "run 2/256",
+            "dependsOn": "kill zombies",
+            "type": "process",
+            "command": "mpirun",
+            "args": [
+                "-np",
+                "2",
+                "./homework4",
+                "../../Astronaught.png",
+                "2",
+                "256",
+                "./out.png"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "run 2/1024",
+            "dependsOn": "kill zombies",
+            "type": "process",
+            "command": "mpirun",
+            "args": [
+                "-np",
+                "2",
+                "./homework4",
+                "../../Astronaught.png",
+                "2",
+                "1024",
+                "./out.png"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "run 4/1024",
+            "dependsOn": "kill zombies",
+            "type": "process",
+            "command": "mpirun",
+            "args": [
+                "-np",
+                "4",
+                "./homework4",
+                "../../Astronaught.png",
+                "4",
+                "1024",
+                "./out.png"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "run 8/1024",
+            "dependsOn": "kill zombies",
+            "type": "process",
+            "command": "mpirun",
+            "args": [
+                "-np",
+                "8",
+                "./homework4",
+                "../../Astronaught.png",
+                "8",
+                "1024",
+                "./out.png"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        }
+    ]
+}

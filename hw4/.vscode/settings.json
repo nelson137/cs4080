@@ -3,8 +3,8 @@
         "cwd": "${workspaceFolder}/build",
         "args": [
             "../../Astronaught.png",
-            "4",
-            "256",
+            "2",
+            "64",
             "out.png"
         ]
     }

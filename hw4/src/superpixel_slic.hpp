@@ -3,58 +3,65 @@
 
 #include <mutex>
 
+#include <mpi.h>
 #include <opencv2/core/mat.hpp>
 
 using namespace std;
 using namespace cv;
+
+#define RANK_MAIN 0
 
 struct Seed
 {
     double l, a, b, x, y;
 };
 
+extern MPI_Datatype Seed_T;
+
 struct DistChange
 {
     double dist;
     int label;
-
-    DistChange() : dist(DBL_MAX), label(-1) {}
-    DistChange(double d, int l) : dist(d), label(l) {}
 };
 
-class SuperpixelSLIC
+void DistChange_Op_min_impl(DistChange *, DistChange *, int *, MPI_Datatype *);
+
+extern MPI_Datatype DistChange_T;
+extern MPI_Op DistChange_Op_min;
+
+class SuperpixelSLIC_MPI
 {
 private:
-    double m_runtime;
+    double m_runtime = 0.0;
 
     const Mat *const m_img_in;
     Mat *m_img_out;
 
-    int m_k, m_n_workers;
+    int m_k, m_n_workers, m_clusters_per_worker;
 
     int m_width, m_height, m_img_size;
-    int m_cluster_size, m_step, m_strip_size, m_cluster_side_len;
+    int m_cluster_size, m_cluster_strip_size, m_cluster_side_len;
 
-    vector<Seed> m_kseeds;
-
-    vector<int> m_labels;
+    Seed *m_kseeds = nullptr;
+    int *m_labels = nullptr;
 
 public:
-    SuperpixelSLIC(const Mat *const img_in, Mat *img_out, int k, int n_workers);
+    SuperpixelSLIC_MPI(const Mat *const img_in, Mat *img_out, int k, int n_workers);
+    ~SuperpixelSLIC_MPI();
 
-    SuperpixelSLIC(const SuperpixelSLIC &) = delete;
-    SuperpixelSLIC(SuperpixelSLIC &&) = delete;
-    SuperpixelSLIC &operator=(const SuperpixelSLIC &) = delete;
+    SuperpixelSLIC_MPI(const SuperpixelSLIC_MPI &) = delete;
+    SuperpixelSLIC_MPI(SuperpixelSLIC_MPI &&) = delete;
+    SuperpixelSLIC_MPI &operator=(const SuperpixelSLIC_MPI &) = delete;
 
 private:
     void _init_seeds();
-    void _iterations();
-    void _iterations_worker(int k_start, int k_end, vector<DistChange> &dists);
+    void _worker_main(int rank);
     void _enforce_connectivity();
     void _draw_contours();
 
 public:
-    void run();
+    void init(int rank);
+    void run(int rank);
 };
 
 #endif

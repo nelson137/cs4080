@@ -30,11 +30,12 @@
     ],
     "configurations": [
         {
+            // Not really used, but keeping just in case
             "name": "Linux",
             "type": "cppdbg",
             "request": "launch",
             "cwd": "${workspaceFolder}/build",
-            "program": "${workspaceFolder}/build/homework3",
+            "program": "${workspaceFolder}/build/homework4",
             "args": [
                 "../../Astronaught.png",
                 "${input:n_workers}",
@@ -42,6 +43,20 @@
                 "out.png"
             ],
             "stopOnEntry": false,
+            "setupCommands": [
+                {
+                    "text": "-enable-pretty-printing",
+                    "description": "Enable GDB pretty printing"
+                }
+            ]
+        },
+        {
+            "name": "Linux [attach]",
+            "type": "cppdbg",
+            "request": "attach",
+            "cwd": "${workspaceFolder}/build",
+            "program": "${workspaceFolder}/build/homework4",
+            "processId": "${command:pickProcess}",
             "setupCommands": [
                 {
                     "text": "-enable-pretty-printing",

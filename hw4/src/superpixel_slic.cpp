@@ -5,6 +5,7 @@
 
 #include <unistd.h>
 
+#include <mpi.h>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
@@ -14,29 +15,66 @@
 #define N_ITERATIONS 10
 #define COMPACTNESS 20.0
 
+#define TAG_SEEDS 0
+
+#define _W(__rank) "w(" << (__rank) << ") "
+#define _W_DEBUG(__rank, __outstreams)        \
+    do                                        \
+    {                                         \
+        cerr << _W((__rank)) << __outstreams; \
+    } while (0)
+
 using namespace std;
 using namespace cv;
 
-SuperpixelSLIC::SuperpixelSLIC(
+MPI_Datatype DistChange_T = MPI_DATATYPE_NULL;
+MPI_Datatype Seed_T = MPI_DATATYPE_NULL;
+
+MPI_Op DistChange_Op_min = MPI_OP_NULL;
+
+void DistChange_Op_min_impl(
+    DistChange *in,
+    DistChange *inout,
+    int *len,
+    MPI_Datatype *datatype)
+{
+    for (int i = 0; i < *len; i++, in++, inout++)
+        if (in->dist < inout->dist)
+            *inout = *in;
+}
+
+SuperpixelSLIC_MPI::SuperpixelSLIC_MPI(
     const Mat *const img_in,
     Mat *img_out,
     int k,
     int n_workers)
     : m_img_in(img_in), m_img_out(img_out), m_k(k), m_n_workers(n_workers)
 {
-    m_runtime = 0.0;
-
-    m_strip_size = int(sqrt(k));
+    m_cluster_strip_size = int(sqrt(k));
 
     m_width = m_img_in->size().width;
     m_height = m_img_in->size().height;
     m_img_size = m_width * m_height;
 
-    m_cluster_size = 0.5 + double(m_img_size) / double(m_k);
-    m_cluster_side_len = m_width / m_strip_size;
+    m_clusters_per_worker = m_k / m_n_workers;
 
-    m_kseeds.reserve(m_k);
-    m_labels.reserve(m_img_size);
+    m_cluster_size = 0.5 + double(m_img_size) / double(m_k);
+    m_cluster_side_len = m_width / m_cluster_strip_size;
+}
+
+SuperpixelSLIC_MPI::~SuperpixelSLIC_MPI()
+{
+    delete[] m_kseeds;
+    delete[] m_labels;
+}
+
+void SuperpixelSLIC_MPI::init(int rank)
+{
+    if (rank != RANK_MAIN)
+        return;
+
+    m_kseeds = new Seed[m_k];
+    m_labels = new int[m_img_size];
 
     timer_start();
     _init_seeds();
@@ -44,24 +82,24 @@ SuperpixelSLIC::SuperpixelSLIC(
     cout << "seed init time: " << t << " ms" << endl;
 }
 
-inline void SuperpixelSLIC::_init_seeds()
+inline void SuperpixelSLIC_MPI::_init_seeds()
 {
     int xoff = m_cluster_side_len / 2;
     int yoff = m_cluster_side_len / 2;
 
-    int err = m_width - m_cluster_side_len * m_strip_size;
-    double err_per_strip = int(double(err) / double(m_strip_size));
+    int err = m_width - m_cluster_side_len * m_cluster_strip_size;
+    double err_per_strip = int(double(err) / double(m_cluster_strip_size));
 
     int i = 0;
 
-    for (int y = 0; y < m_strip_size; y++)
+    for (int y = 0; y < m_cluster_strip_size; y++)
     {
         int y_err = y * err_per_strip;
         int Y = y * m_cluster_side_len + yoff + y_err;
         if (Y > m_height - 1)
             continue;
 
-        for (int x = 0; x < m_strip_size; x++)
+        for (int x = 0; x < m_cluster_strip_size; x++)
         {
             int x_err = x * err_per_strip;
             int X = x * m_cluster_side_len + xoff + x_err;
@@ -80,13 +118,17 @@ inline void SuperpixelSLIC::_init_seeds()
     }
 }
 
-void SuperpixelSLIC::run()
+void SuperpixelSLIC_MPI::run(int rank)
 {
     double t;
 
     timer_start();
-    _iterations();
+    _worker_main(rank);
     t = timer_end();
+
+    if (rank != RANK_MAIN)
+        return;
+
     cout << "iterations time: " << t << " ms" << endl;
     m_runtime += t;
 
@@ -105,151 +147,170 @@ void SuperpixelSLIC::run()
     cout << "total runtime: " << m_runtime << " ms" << endl;
 }
 
-inline void SuperpixelSLIC::_iterations()
+inline void SuperpixelSLIC_MPI::_worker_main(int rank)
 {
-    vector<double> distances(m_img_size);
-    vector<vector<DistChange>> worker_dists(m_n_workers);
-    vector<double> clustersize(m_k);
-    vector<double> inverses(m_k);
-    vector<Seed> sigmas(m_k);
+    Seed *worker_seeds = new Seed[m_k];
+    DistChange *worker_dists = new DistChange[m_img_size];
+    DistChange *min_distchanges = nullptr;
+    vector<double> cluster_sizes;
+    vector<double> inverses;
+    vector<Seed> sigmas;
 
-    vector<thread> workers;
-    workers.reserve(m_n_workers);
-    int clusters_per_worker = m_k / m_n_workers;
+    if (rank == RANK_MAIN)
+    {
+        min_distchanges = new DistChange[m_img_size];
+        cluster_sizes.reserve(m_img_size);
+        inverses.reserve(m_k);
+        sigmas.reserve(m_k);
+    }
+
+    const int k_start = rank * m_clusters_per_worker;
+    const int k_end = k_start + m_clusters_per_worker;
+    const double inverse_weight = m_cluster_side_len;
 
     for (int itr = 0; itr < N_ITERATIONS; itr++)
     {
-        workers.clear();
-        distances.assign(m_img_size, DBL_MAX);
+        for (int i = 0; i < m_img_size; i++)
+            worker_dists[i] = DistChange{DBL_MAX, -1};
 
-        // Create worker threads and start jobs
-        // Note: main thread is not a worker, m_n_workers workers are spawned
-        for (int i = 0; i < m_n_workers; i++)
+        //------------------------------------------------------------
+        // Distribute latest seeds
+        //------------------------------------------------------------
+
+        if (rank == RANK_MAIN)
         {
-            int k_start = i * clusters_per_worker;
-            int k_end = k_start + clusters_per_worker;
-            worker_dists[i].assign(m_img_size, DistChange());
-            auto method = mem_fn(&SuperpixelSLIC::_iterations_worker);
-            auto worker = bind(
-                method,
-                ref(*this), k_start, k_end, ref(worker_dists[i]));
-            workers.emplace_back(worker);
+            // _W_DEBUG(rank, "::: itr " << itr << " :::" << endl);
+            // Copy latest seeds into main worker's buffer
+            memcpy(worker_seeds, m_kseeds, sizeof(Seed) * m_k);
+            // Send latest seeds to all *other* workers
+            for (int w = 1; w < m_n_workers; w++)
+            {
+                // TODO: use MPI_Bcast
+                // _W_DEBUG(rank, "send seeds -> " << _W(w) << endl);
+                MPI_Send(m_kseeds, m_k, Seed_T, w, TAG_SEEDS, MPI_COMM_WORLD);
+            }
+        }
+        else
+        {
+            // Acts like barrier, workers block until a message is in the queue
+            MPI_Recv(worker_seeds, m_k, Seed_T, RANK_MAIN, TAG_SEEDS,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            // _W_DEBUG(rank, "recv seeds <- " << _W(RANK_MAIN) << endl);
         }
 
-        for (thread &wt : workers)
-            wt.join();
+        //------------------------------------------------------------
+        // Calculate distances
+        //------------------------------------------------------------
 
-        // Reduce distances calculated by workers into primary dists and labels arrays
-        for (int w = 0; w < m_n_workers; w++)
+        // _W_DEBUG(rank, "calc dists" << endl);
+        for (int k = k_start; k < k_end; k++)
         {
-            const vector<DistChange> &w_dists = worker_dists[w];
-            for (int p = 0; p < m_img_size; p++)
+            Seed seed = worker_seeds[k];
+
+            int y1 = max(0.0, seed.y - m_cluster_side_len);
+            int y2 = min((double)m_height, seed.y + m_cluster_side_len);
+            int x1 = max(0.0, seed.x - m_cluster_side_len);
+            int x2 = min((double)m_width, seed.x + m_cluster_side_len);
+
+            for (int y = y1; y < y2; y++)
             {
-                DistChange dc = w_dists[p];
-                if (dc.dist < distances[p])
+                for (int x = x1; x < x2; x++)
                 {
-                    distances[p] = dc.dist;
-                    m_labels[p] = dc.label;
+                    int i = y * m_width + x;
+                    Vec3b point = m_img_in->at<Vec3b>(i);
+                    double l = point(0);
+                    double a = point(1);
+                    double b = point(2);
+                    double dist = (l - seed.l) * (l - seed.l) +
+                                  (a - seed.a) * (a - seed.a) +
+                                  (b - seed.b) * (b - seed.b);
+                    double distxy = (x - seed.x) * (x - seed.x) +
+                                    (y - seed.y) * (y - seed.y);
+                    //--------------------------------------------------
+                    dist += distxy * inverse_weight;
+                    //--------------------------------------------------
+                    if (dist < worker_dists[i].dist)
+                        worker_dists[i] = DistChange{dist, k};
                 }
             }
         }
 
-        //-----------------------------------------------------------------
-        // Recalculate the centroid and store in the seed values
-        //-----------------------------------------------------------------
-        //instead of reassigning memory on each iteration, just reset.
+        // _W_DEBUG(rank, "reduce" << endl);
+        MPI_Reduce(worker_dists, min_distchanges, m_img_size, DistChange_T,
+                   DistChange_Op_min, RANK_MAIN, MPI_COMM_WORLD);
 
-        sigmas.assign(m_k, {0.0, 0.0, 0.0, 0.0, 0.0});
-        clustersize.assign(m_k, 0);
-        int ind = 0;
-        for (int r = 0; r < m_height; r++)
+        // Wait for all workers to call reduce with their calculated dists
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        if (rank == RANK_MAIN)
         {
-            for (int c = 0; c < m_width; c++)
+            //------------------------------------------------------------
+            // Update labels using those in min dist changes from reduce
+            //------------------------------------------------------------
+
+            // _W_DEBUG(rank, "recalc clusters" << endl);
+            for (int i = 0; i < m_img_size; i++)
+                m_labels[i] = min_distchanges[i].label;
+
+            //------------------------------------------------------------
+            // Recalculate the centroid and store in the seed values
+            //------------------------------------------------------------
+
+            sigmas.assign(m_k, {0.0, 0.0, 0.0, 0.0, 0.0});
+            cluster_sizes.assign(m_k, 0.0);
+
             {
-                Seed &sigma = sigmas[m_labels[ind]];
-                Vec3b point = m_img_in->at<Vec3b>(ind);
-                sigma.l += point(0);
-                sigma.a += point(1);
-                sigma.b += point(2);
-                sigma.x += c;
-                sigma.y += r;
-                clustersize[m_labels[ind]] += 1.0;
-                ind++;
-            }
-        }
-
-        {
-            for (int k = 0; k < m_k; k++)
-            {
-                if (clustersize[k] <= 0)
-                    clustersize[k] = 1;
-                // computing inverse now to multiply later
-                inverses[k] = 1.0 / clustersize[k];
-            }
-        }
-
-        {
-            for (int k = 0; k < m_k; k++)
-            {
-                Seed &sigma = sigmas[k];
-                double inv = inverses[k];
-                m_kseeds[k] = {
-                    sigma.l * inv,
-                    sigma.a * inv,
-                    sigma.b * inv,
-                    sigma.x * inv,
-                    sigma.y * inv};
-            }
-        }
-    }
-}
-
-inline void SuperpixelSLIC::_iterations_worker(
-    int k_start,
-    int k_end,
-    vector<DistChange> &dists)
-{
-    dists.assign(m_img_size, DistChange());
-
-    double inverse_weight = double(m_cluster_side_len * m_cluster_side_len) / double(m_cluster_side_len);
-
-    // Do work, different set of `k`s for each worker
-    for (int k = k_start; k < k_end; k++)
-    {
-        Seed &seed = m_kseeds[k];
-
-        int y1 = max(0.0, seed.y - m_cluster_side_len);
-        int y2 = min((double)m_height, seed.y + m_cluster_side_len);
-        int x1 = max(0.0, seed.x - m_cluster_side_len);
-        int x2 = min((double)m_width, seed.x + m_cluster_side_len);
-
-        for (int y = y1; y < y2; y++)
-        {
-            for (int x = x1; x < x2; x++)
-            {
-                int i = y * m_width + x;
-                Vec3b point = m_img_in->at<Vec3b>(i);
-                double l = point(0);
-                double a = point(1);
-                double b = point(2);
-                double dist = (l - seed.l) * (l - seed.l) +
-                              (a - seed.a) * (a - seed.a) +
-                              (b - seed.b) * (b - seed.b);
-                double distxy = (x - seed.x) * (x - seed.x) +
-                                (y - seed.y) * (y - seed.y);
-                //------------------------------------------------------------------------
-                dist += distxy * inverse_weight;
-                //------------------------------------------------------------------------
-                if (dist < dists[i].dist)
+                int ind = 0;
+                for (int r = 0; r < m_height; r++)
                 {
-                    dists[i] = DistChange(dist, k);
+                    for (int c = 0; c < m_width; c++)
+                    {
+                        int l = m_labels[ind];
+                        Seed &sigma = sigmas[l];
+                        Vec3b point = m_img_in->at<Vec3b>(ind);
+                        sigma.l += point(0);
+                        sigma.a += point(1);
+                        sigma.b += point(2);
+                        sigma.x += c;
+                        sigma.y += r;
+                        cluster_sizes[l] += 1.0;
+                        ind++;
+                    }
+                }
+            }
+
+            {
+                for (int k = 0; k < m_k; k++)
+                {
+                    if (cluster_sizes[k] <= 0)
+                        cluster_sizes[k] = 1;
+                    // computing inverse now to multiply later
+                    inverses[k] = 1.0 / cluster_sizes[k];
+                }
+            }
+
+            {
+                for (int k = 0; k < m_k; k++)
+                {
+                    Seed &sigma = sigmas[k];
+                    double inv = inverses[k];
+                    m_kseeds[k] = {
+                        sigma.l * inv,
+                        sigma.a * inv,
+                        sigma.b * inv,
+                        sigma.x * inv,
+                        sigma.y * inv};
                 }
             }
         }
     }
+
+    delete[] worker_seeds;
+    delete[] worker_dists;
+    delete[] min_distchanges;
 }
 
-inline void SuperpixelSLIC::_enforce_connectivity()
+inline void SuperpixelSLIC_MPI::_enforce_connectivity()
 {
     const int dx4[4] = {-1, 0, 1, 0};
     const int dy4[4] = {0, -1, 0, 1};
@@ -334,10 +395,10 @@ inline void SuperpixelSLIC::_enforce_connectivity()
         }
     }
 
-    m_labels = new_labels;
+    memcpy(m_labels, new_labels.data(), sizeof(int) * m_img_size);
 }
 
-inline void SuperpixelSLIC::_draw_contours()
+inline void SuperpixelSLIC_MPI::_draw_contours()
 {
     static constexpr int dx8[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
     static constexpr int dy8[8] = {0, -1, -1, -1, 0, 1, 1, 1};
