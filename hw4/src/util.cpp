@@ -58,7 +58,7 @@ vector<system_clock::time_point> _t_times;
 
 void timer_start()
 {
-    auto it = _t_times.emplace(_t_times.cend());
+    auto it = _t_times.emplace(_t_times.end());
     *it = system_clock::now();
 }
 
