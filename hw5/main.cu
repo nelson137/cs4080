@@ -1,6 +1,5 @@
 #include <cstdlib>
 #include <iostream>
-#include <set>
 #include <string>
 
 #include <cuda_runtime.h>
@@ -14,8 +13,6 @@
 using namespace std;
 
 const char *ARG0 = "homework5";
-
-static const set<int> FILTER_SIZE_CHOICES = { 3, 7, 11, 15 };
 
 static void help_and_exit(int code = 0)
 {
@@ -67,9 +64,17 @@ int main(int argc, char *argv[])
     int filter_size;
     if (!cstr_to_int(filter_size_str, &filter_size))
         die("invalid filter size: %s", filter_size_str);
-    if (FILTER_SIZE_CHOICES.find(filter_size) == FILTER_SIZE_CHOICES.end())
-        die("unsupported filter size: %d", filter_size);
-    int filter_radius = filter_size / 2;
+
+    // Validate filter size, choose kernel
+    void (*kernel)(unsigned char *, unsigned char *, unsigned int, unsigned int);
+    switch (filter_size)
+    {
+        case  3: kernel = median_filter_r1; break;
+        case  7: kernel = median_filter_r3; break;
+        case 11: kernel = median_filter_r5; break;
+        case 15: kernel = median_filter_r7; break;
+        default: die("unsupported filter size: %d", filter_size);
+    }
 
     // Validate infile
     const char *infile = argv[2];
@@ -114,8 +119,8 @@ int main(int argc, char *argv[])
         ERR("failed to copy image data onto device");
 
     // Launch kernel
-    median_filter<<< n_pixels / n_threads, n_threads >>>(
-        d_img_in, d_img_out, n_pixels, (unsigned)filter_radius
+    kernel<<< n_pixels / n_threads, n_threads >>>(
+        d_img_in, d_img_out, width, height
     );
     if ((ret = cudaDeviceSynchronize()))
         ERR("failed to launch kernel");
