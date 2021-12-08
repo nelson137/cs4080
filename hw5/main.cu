@@ -1,10 +1,12 @@
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <string>
 
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
-#include <helper_functions.h>
+#include <helper_image.h>
+#include <helper_timer.h>
 
 #include "util.hpp"
 
@@ -41,6 +43,12 @@ ARGUMENTS\n\
         fprintf(stderr, "  %s\n", cudaGetErrorString(ret)); \
     goto err; \
 } while(0)
+
+#define MARK_TIME(__label) do { \
+    double __t_ms = timer.getTime(); \
+    printf("%s: %.4f ms\n", (__label), __t_ms); \
+    (timer).reset(); \
+} while (0)
 
 int main(int argc, char *argv[])
 {
@@ -84,6 +92,9 @@ int main(int argc, char *argv[])
     // Set outfile
     const char *outfile = argv[3];
 
+    cout << "infile: " << infile << endl;
+    cout << "outfile: " << outfile << endl;
+
     /**
      * Load image, launch kernel
      */
@@ -96,9 +107,15 @@ int main(int argc, char *argv[])
 
     unsigned char *d_img_in = NULL, *d_img_out = NULL;
 
+    StopWatchLinux timer;
+
     // Allocate host input image & load infile
+    timer.start();
     if (!sdkLoadPGM<unsigned char>(infile, &h_img_in, &width, &height))
         ERR("failed to load image: %s", infile);
+    timer.stop();
+    cout << "image dimensions: " << width << " x " << height << endl;
+    MARK_TIME("image load time");
     n_pixels = width * height;
     img_size = sizeof(unsigned char) * n_pixels;
 
@@ -117,6 +134,8 @@ int main(int argc, char *argv[])
     if ((ret = cudaMemset(d_img_out, 0xff, img_size)))
         ERR("failed to initialize output image on device");
 
+    timer.start();
+
     // Copy input image from host to device
     if ((ret = cudaMemcpy(d_img_in, h_img_in, img_size, cudaMemcpyHostToDevice)))
         ERR("failed to copy image data onto device");
@@ -131,6 +150,9 @@ int main(int argc, char *argv[])
     // Copy output image from device back to host
     if ((ret = cudaMemcpy(h_img_out, d_img_out, img_size, cudaMemcpyDeviceToHost)))
         ERR("failed to copy output image from device to host");
+
+    timer.stop();
+    MARK_TIME("kernel latency");
 
     // Write outfile
     if (!sdkSavePGM(outfile, h_img_out, width, height))
