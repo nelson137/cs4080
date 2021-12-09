@@ -21,7 +21,7 @@ const char *ARG0 = "homework5";
 static void help_and_exit(int code = 0)
 {
     ostream &os = code ? cerr : cout;
-    os << "Usage: " << ARG0 << " FILTER_SIZE INFILE OUTFILE" << endl;
+    os << "Usage: " << ARG0 << " FILTER_SIZE INFILE OUTFILE [THREADS]" << endl;
     os << endl;
     os << "\
 DESCRIPTION\n\
@@ -33,6 +33,8 @@ ARGUMENTS\n\
                radius of 1. Must be 3, 7, 11, or 15.\n\
   INFILE       The path of the input file.\n\
   OUTFILE      The path of the output file.\n\
+  THREADS      The number of threads per block to use for the kernel\n\
+               configuration.\n\
 ";
     exit(code);
 }
@@ -68,7 +70,7 @@ int main(int argc, char *argv[])
 
     bool test_gold_standard = string(ARG0).rfind("-no-gold") == string::npos;
 
-    if (argc != 4)
+    if (argc != 4 && argc != 5)
         help_and_exit(1);
 
     // Parse and validate filter size
@@ -97,15 +99,27 @@ int main(int argc, char *argv[])
     // Set outfile
     const char *outfile = argv[3];
 
+    unsigned n_threads = 64;
+    if (argc == 5)
+    {
+        int t;
+        const char *n_threads_str = argv[4];
+        if (!cstr_to_int(n_threads_str, &t))
+            die("invalid number of threads: %s", n_threads_str);
+        if (t <= 0)
+            die("unsupported number of threads: %d", t);
+        n_threads = (unsigned) t;
+    }
+
     cout << "infile: " << infile << endl;
     cout << "outfile: " << outfile << endl;
+    cout << "threads: " << n_threads << endl;
 
     /**
      * Load image, launch kernel
      */
 
     cudaError_t ret = cudaSuccess;
-    unsigned n_threads = 64;
     dim3 grid, blocks;
     unsigned int width, height, n_pixels;
     size_t img_size;
