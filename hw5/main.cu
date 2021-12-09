@@ -113,6 +113,9 @@ int main(int argc, char *argv[])
     // Allocate device output image
     if ((ret = cudaMalloc(&d_img_out, img_size)))
         ERR("failed to allocate space for the output image on device");
+    // Initialize device output image (for border)
+    if ((ret = cudaMemset(d_img_out, 0xff, img_size)))
+        ERR("failed to initialize output image on device");
 
     // Copy input image from host to device
     if ((ret = cudaMemcpy(d_img_in, h_img_in, img_size, cudaMemcpyHostToDevice)))
@@ -126,7 +129,7 @@ int main(int argc, char *argv[])
         ERR("failed to launch kernel");
 
     // Copy output image from device back to host
-    if ((ret = cudaMemcpy(h_img_out, d_img_in, img_size, cudaMemcpyDeviceToHost)))
+    if ((ret = cudaMemcpy(h_img_out, d_img_out, img_size, cudaMemcpyDeviceToHost)))
         ERR("failed to copy output image from device to host");
 
     // Write outfile
