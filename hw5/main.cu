@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 
 #include <cuda_runtime.h>
@@ -8,6 +9,7 @@
 #include <helper_image.h>
 #include <helper_timer.h>
 
+#include "gold_standard.hpp"
 #include "util.hpp"
 
 #include "kernels.cuh"
@@ -64,6 +66,8 @@ int main(int argc, char *argv[])
      * Argument parsing
      */
 
+    bool test_gold_standard = string(ARG0).rfind("-no-gold") == string::npos;
+
     if (argc != 4)
         help_and_exit(1);
 
@@ -72,6 +76,7 @@ int main(int argc, char *argv[])
     int filter_size;
     if (!cstr_to_int(filter_size_str, &filter_size))
         die("invalid filter size: %s", filter_size_str);
+    int filter_radius = filter_size / 2;
 
     // Validate filter size, choose kernel
     void (*kernel)(unsigned char *, unsigned char *, unsigned int, unsigned int);
@@ -106,6 +111,9 @@ int main(int argc, char *argv[])
     unsigned char *h_img_in = NULL, *h_img_out = NULL;
 
     unsigned char *d_img_in = NULL, *d_img_out = NULL;
+
+    unique_ptr<unsigned char[]> gold_img_out;
+    double matching_pixels = 0.0, percent_match = 0.0;
 
     StopWatchLinux timer;
 
@@ -153,6 +161,25 @@ int main(int argc, char *argv[])
 
     timer.stop();
     MARK_TIME("kernel latency");
+
+    if (test_gold_standard)
+    {
+        // Compute "gold standard"
+        timer.start();
+        gold_img_out = gold_standard(h_img_in, width, height, filter_radius);
+        timer.stop();
+        MARK_TIME("gold standard latency");
+
+        // Calculate pixel-wise exact match of device output and gold standard
+        for (int i = 0; i < n_pixels; i++)
+            if (gold_img_out.get()[i] == h_img_out[i])
+                matching_pixels++;
+        percent_match = 100.0 * matching_pixels / n_pixels;
+        cout << "pixel-wise exact match: "
+             << fixed << setprecision(2) << percent_match << '%'
+             << " (" << (percent_match == 100.0 ? "PASS" : "FAIL") << ')'
+             << endl;
+    }
 
     // Write outfile
     if (!sdkSavePGM(outfile, h_img_out, width, height))

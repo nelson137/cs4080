@@ -335,13 +335,17 @@ ifeq ($(SAMPLE_ENABLED),0)
 	@echo "Not building due to the above missing dependencies"
 endif
 
-homework5: main.o util.o kernels.o
+homework5: main.o util.o gold_standard.o kernels.o
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
+	ln -fs $@ $@-no-gold
 
 main.o: main.cu
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 util.o: util.cpp
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
+gold_standard.o: gold_standard.cpp
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 kernels.o: kernels.cu
@@ -351,4 +355,4 @@ clean:
 	rm -f *.o
 
 clobber: clean
-	rm -f homework5 out*.pgm
+	rm -f homework5* out*.pgm
