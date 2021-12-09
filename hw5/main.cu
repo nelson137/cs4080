@@ -106,6 +106,7 @@ int main(int argc, char *argv[])
 
     cudaError_t ret = cudaSuccess;
     unsigned n_threads = 64;
+    dim3 grid, blocks;
     unsigned int width, height, n_pixels;
     size_t img_size;
     unsigned char *h_img_in = NULL, *h_img_out = NULL;
@@ -142,6 +143,15 @@ int main(int argc, char *argv[])
     if ((ret = cudaMemset(d_img_out, 0xff, img_size)))
         ERR("failed to initialize output image on device");
 
+    // Define configuration
+    grid = dim3(n_pixels / n_threads);
+    blocks = dim3(n_threads);
+
+    // Warmup
+    kernel<<< grid, blocks >>>(d_img_in, d_img_out, width, height);
+    if ((ret = cudaDeviceSynchronize()))
+        ERR("failed to launch kernel (for warmup");
+
     timer.start();
 
     // Copy input image from host to device
@@ -149,9 +159,7 @@ int main(int argc, char *argv[])
         ERR("failed to copy image data onto device");
 
     // Launch kernel
-    kernel<<< n_pixels / n_threads, n_threads >>>(
-        d_img_in, d_img_out, width, height
-    );
+    kernel<<< grid, blocks >>>(d_img_in, d_img_out, width, height);
     if ((ret = cudaDeviceSynchronize()))
         ERR("failed to launch kernel");
 
