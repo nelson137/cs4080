@@ -1,0 +1,4 @@
+#ifndef _SUPERPIXEL_SLIC_CUH
+#define _SUPERPIXEL_SLIC_CUH
+
+#endif
