@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
     if ((ret = cudaMalloc(&d_img_out, img_size)))
         ERR("failed to allocate space for the output image on device");
     // Initialize device output image (for border)
-    if ((ret = cudaMemset(d_img_out, 0xff, img_size)))
+    if ((ret = cudaMemset(d_img_out, 0x00, img_size)))
         ERR("failed to initialize output image on device");
 
     // Define configuration

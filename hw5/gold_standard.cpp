@@ -40,7 +40,7 @@ unique_ptr<unsigned char[]> gold_standard(
     size_t n_area = n_side * n_side;
 
     unique_ptr<unsigned char[]> img_out(new unsigned char[size]);
-    memset(img_out.get(), 0xff, size);
+    memset(img_out.get(), 0x00, size);
 
     vector<unsigned char> neighborhood(n_area);
 
