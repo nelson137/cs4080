@@ -283,9 +283,6 @@ LIBRARIES :=
 
 ################################################################################
 
-# Makefile include to help find GL Libraries
-#include ./findgllib.mk
-
 # OpenGL specific libraries
 ifeq ($(TARGET_OS),darwin)
  # Mac OSX specific libraries and paths to include
