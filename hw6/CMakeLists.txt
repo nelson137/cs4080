@@ -33,6 +33,7 @@ string(REPLACE ";" "," OpenCV_LIBS_NVCC "${OpenCV_LIBS}")
 add_executable(homework6
   src/main.cu
   src/util.cpp
+  src/gold_standard.cpp
   src/superpixel_gslic.cu
   )
 
@@ -59,4 +60,10 @@ target_include_directories(homework6 PRIVATE
 target_link_libraries(homework6 PRIVATE
   -lcudadevrt
   --linker-options ${OpenCV_LIBS_NVCC}
+  )
+
+add_custom_command(TARGET homework6
+  POST_BUILD
+  COMMAND ln -fs homework6 homework6-no-gold
+  VERBATIM
   )

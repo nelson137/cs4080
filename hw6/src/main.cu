@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -11,9 +12,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
-#include "util.hpp"
-
+#include "gold_standard.hpp"
 #include "superpixel_gslic.cuh"
+#include "types.h"
+#include "util.hpp"
 
 using namespace std;
 using namespace cv;
@@ -69,6 +71,8 @@ int main(int argc, char *argv[])
      * Argument parsing
      */
 
+    bool no_gold = string(ARG0).rfind("-no-gold") != string::npos;
+
     if (argc != 4)
         help_and_exit(1);
 
@@ -111,8 +115,10 @@ int main(int argc, char *argv[])
     unsigned int n_pixels = width * height;
 
     // Convert to CIELAB
-    Mat h_img_lab;
-    cvtColor(img_rgb, h_img_lab, COLOR_BGR2Lab);
+    Mat h_img_lab_in, h_img_lab_out;
+    cvtColor(img_rgb, h_img_lab_in, COLOR_BGR2Lab);
+    h_img_lab_out.create(
+        h_img_lab_in.rows, h_img_lab_in.cols, h_img_lab_in.type());
 
     cudaError_t ret = cudaSuccess;
 
@@ -126,6 +132,8 @@ int main(int argc, char *argv[])
     size_t distances_size = sizeof(ClosestSeed_t) * n_pixels;
 
     Mat gold_img_lab;
+    Seed_t *h_gpu_seeds = NULL, *h_gold_seeds = NULL;
+    double percent_match = 0.0;
 
     if ((ret = cudaMalloc(&d_img, img_lab_size)))
         ERR("failed to allocate space for image on device");
@@ -142,7 +150,7 @@ int main(int argc, char *argv[])
 
     timer.start();
 
-    if ((ret = cudaMemcpy(d_img, h_img_lab.data, img_lab_size,
+    if ((ret = cudaMemcpy(d_img, h_img_lab_in.data, img_lab_size,
                           cudaMemcpyHostToDevice)))
         ERR("failed to copy image to device");
 
@@ -152,7 +160,7 @@ int main(int argc, char *argv[])
         d_img, width, height, d_seeds, n_seeds, d_distances
     );
 
-    if ((ret = cudaMemcpy(h_img_lab.data, d_img, img_lab_size,
+    if ((ret = cudaMemcpy(h_img_lab_out.data, d_img, img_lab_size,
                           cudaMemcpyDeviceToHost)))
         ERR("failed to copy output image to host");
 
@@ -160,11 +168,53 @@ int main(int argc, char *argv[])
     MARK_TIME("kernel latency");
 
     /**
+     * Run gold standard and compare outputs
+     */
+
+    if (!no_gold)
+    {
+        gold_img_lab = h_img_lab_in.clone();
+        SuperpixelGSLIC_Gold gold(
+            (Pixel_t *)gold_img_lab.data, width, height, n_seeds
+        );
+
+        timer.start();
+        gold.run();
+        timer.stop();
+        MARK_TIME("gold standard latency");
+
+        h_gold_seeds = gold.get_seeds();
+
+        if ((h_gpu_seeds = (Seed_t *)malloc(seeds_size)) == NULL)
+            ERR("failed to allocate space for output seeds on host");
+        if ((cudaMemcpy(h_gpu_seeds, d_seeds, seeds_size,
+                        cudaMemcpyDeviceToHost)))
+            ERR("failed to copy computed seeds to host");
+
+        for (int i = 0; i < n_seeds; ++i, ++h_gpu_seeds, ++h_gold_seeds)
+        {
+            if (h_gpu_seeds->x == h_gold_seeds->x) percent_match += 0.2;
+            if (h_gpu_seeds->y == h_gold_seeds->y) percent_match += 0.2;
+            if (h_gpu_seeds->l == h_gold_seeds->l) percent_match += 0.2;
+            if (h_gpu_seeds->a == h_gold_seeds->a) percent_match += 0.2;
+            if (h_gpu_seeds->b == h_gold_seeds->b) percent_match += 0.2;
+        }
+
+        percent_match /= (double) n_seeds;
+        percent_match *= 100.0;
+        bool is_match = abs(100.0 - percent_match) < 0.01;
+        cout << "exact seed match: "
+             << fixed << setprecision(2) << (percent_match) << '%'
+             << " (" << (is_match ? "PASS" : "FAIL") << ')'
+             << endl;
+    }
+
+    /**
      * Write the output image to filesystem
      */
 
     // Convert back to RGB
-    cvtColor(h_img_lab, img_rgb, COLOR_Lab2BGR);
+    cvtColor(h_img_lab_out, img_rgb, COLOR_Lab2BGR);
 
     if (!imwrite(outfile, img_rgb))
         ERR("failed to write output image to file: %s", outfile);
