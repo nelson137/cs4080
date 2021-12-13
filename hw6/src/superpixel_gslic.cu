@@ -33,6 +33,7 @@ void superpixel_gslic__init_seeds(
 
     unsigned int seed_i = 0;
 
+    #pragma unroll 8
     for (unsigned int y = 0; y < seed_strip_size; ++y)
     {
         unsigned int y_err = y * err_per_strip;
@@ -40,6 +41,7 @@ void superpixel_gslic__init_seeds(
         if (Y >= height)
             continue;
 
+        #pragma unroll 8
         for (unsigned int x = 0; x < seed_strip_size; ++x)
         {
             unsigned int x_err = x * err_per_strip;
@@ -106,6 +108,7 @@ void superpixel_gslic__iter__dist(
 
         ClosestSeed_t closest_seed = { .dist = DBL_MAX, .label = UINT_MAX };
 
+        #pragma unroll 8
         for (unsigned int s = 0; s < n_seeds; ++s)
         {
             Seed_t seed = seeds[s];
@@ -144,8 +147,10 @@ void superpixel_gslic__iter__recalc_seeds(
         seed_pixel_counts[i] = 0.0;
 
         unsigned int pixel_i = 0;
+        #pragma unroll 8
         for (unsigned int y = 0; y < height; ++y)
         {
+            #pragma unroll 8
             for (unsigned int x = 0; x < width; ++x)
             {
                 if (distances[pixel_i].label == i)
@@ -234,6 +239,7 @@ void superpixel_gslic(
     );
     cudaDeviceSynchronize();
 
+    #pragma unroll
     for (unsigned int iter = 0; iter < ITERATIONS; ++iter)
     {
         superpixel_gslic__iter__dist
