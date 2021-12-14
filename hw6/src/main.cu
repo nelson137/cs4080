@@ -125,11 +125,7 @@ int main(int argc, char *argv[])
     ClosestSeed_t *d_distances = NULL;
     size_t distances_size = sizeof(ClosestSeed_t) * n_pixels;
 
-    Seed_t *d_seed_sigmas = NULL;
-    size_t seed_sigmas_size = sizeof(Seed_t) * n_seeds;
-
-    double *d_seed_pixel_counts = NULL;
-    size_t seed_pixel_counts_size = sizeof(double) * n_seeds;
+    Mat gold_img_lab;
 
     if ((ret = cudaMalloc(&d_img, img_lab_size)))
         ERR("failed to allocate space for image on device");
@@ -139,12 +135,6 @@ int main(int argc, char *argv[])
 
     if ((ret = cudaMalloc(&d_distances, distances_size)))
         ERR("failed to allocate space for distances array on device");
-
-    if ((ret = cudaMalloc(&d_seed_sigmas, seed_sigmas_size)))
-        ERR("failed to allocate space for seed sigmas array on device");
-
-    if ((ret = cudaMalloc(&d_seed_pixel_counts, seed_pixel_counts_size)))
-        ERR("failed to allocate space for seed sizes array on device");
 
     /**
      * Copy to kernel, run, copy back
@@ -159,9 +149,7 @@ int main(int argc, char *argv[])
     superpixel_gslic
         <<< 1, 1 >>>
     (
-        d_img, width, height,
-        d_seeds, n_seeds,
-        d_distances, d_seed_sigmas, d_seed_pixel_counts
+        d_img, width, height, d_seeds, n_seeds, d_distances
     );
 
     if ((ret = cudaMemcpy(h_img_lab.data, d_img, img_lab_size,
@@ -191,8 +179,6 @@ err:
     code = 1;
 
 end:
-    cudaFree(d_seed_pixel_counts);
-    cudaFree(d_seed_sigmas);
     cudaFree(d_distances);
     cudaFree(d_seeds);
     cudaFree(d_img);

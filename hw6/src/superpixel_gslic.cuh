@@ -29,9 +29,7 @@ void superpixel_gslic(
     unsigned int height,
     Seed_t *seeds,
     unsigned int n_seeds,
-    ClosestSeed_t *distances,
-    Seed_t *seed_sigmas,
-    double *seed_pixel_counts
+    ClosestSeed_t *distances
 );
 
 #endif

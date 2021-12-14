@@ -136,15 +136,13 @@ void superpixel_gslic__iter__recalc_seeds(
     unsigned int height,
     unsigned int n_seeds,
     Seed_t *seeds,
-    Seed_t *seed_sigmas,
-    double *seed_pixel_counts,
     ClosestSeed_t *distances)
 {
     const unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
     if (i < n_seeds)
     {
-        seed_sigmas[i] = { .x = 0.0, .y = 0.0, .l = 0.0, .a = 0.0, .b = 0.0 };
-        seed_pixel_counts[i] = 0.0;
+        Seed_t sigma = { .x = 0.0, .y = 0.0, .l = 0.0, .a = 0.0, .b = 0.0 };
+        double pixel_count = 0.0;
 
         unsigned int pixel_i = 0;
         #pragma unroll 8
@@ -155,30 +153,27 @@ void superpixel_gslic__iter__recalc_seeds(
             {
                 if (distances[pixel_i].label == i)
                 {
-                    seed_pixel_counts[i] += 1.0;
-                    Seed_t *sigma = seed_sigmas + i;
+                    pixel_count += 1.0;
                     Pixel_t pixel = img[pixel_i];
-                    sigma->x += x;
-                    sigma->y += y;
-                    sigma->l += (double) pixel.l;
-                    sigma->a += (double) pixel.a;
-                    sigma->b += (double) pixel.b;
+                    sigma.x += x;
+                    sigma.y += y;
+                    sigma.l += (double) pixel.l;
+                    sigma.a += (double) pixel.a;
+                    sigma.b += (double) pixel.b;
                 }
                 ++pixel_i;
             }
         }
 
-        double s_size = seed_pixel_counts[i];
-        if (s_size <= 0.0)
-            s_size = 1.0;
+        if (pixel_count == 0.0)
+            pixel_count = 1.0;
 
-        Seed_t sigma = seed_sigmas[i];
         seeds[i] = {
-            .x = sigma.x / s_size,
-            .y = sigma.y / s_size,
-            .l = sigma.l / s_size,
-            .a = sigma.a / s_size,
-            .b = sigma.b / s_size
+            .x = sigma.x / pixel_count,
+            .y = sigma.y / pixel_count,
+            .l = sigma.l / pixel_count,
+            .a = sigma.a / pixel_count,
+            .b = sigma.b / pixel_count
         };
     }
 }
@@ -223,9 +218,7 @@ void superpixel_gslic(
     unsigned int height,
     Seed_t *seeds,
     unsigned int n_seeds,
-    ClosestSeed_t *distances,
-    Seed_t *seed_sigmas,
-    double *seed_pixel_counts)
+    ClosestSeed_t *distances)
 {
     const unsigned int n_pixels = width * height;
     const unsigned int seed_size = 0.5 + n_pixels / n_seeds;
@@ -254,9 +247,7 @@ void superpixel_gslic(
         superpixel_gslic__iter__recalc_seeds
             <<< n_seeds / SUB_KERNEL_BS, SUB_KERNEL_BS >>>
         (
-            img, width ,height,
-            n_seeds, seeds,
-            seed_sigmas, seed_pixel_counts, distances
+            img, width ,height, n_seeds, seeds, distances
         );
         cudaDeviceSynchronize();
     }
