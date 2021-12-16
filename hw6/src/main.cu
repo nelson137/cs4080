@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include <libgen.h>
+
 #include <cuda_runtime.h>
 #include <helper_timer.h>
 
@@ -95,9 +97,20 @@ int main(int argc, char *argv[])
     if (string(outfile).rfind(".png") == string::npos)
         die("outfile must end with .png: %s", outfile);
 
+    // Create separate copies of outfile path and filename
+    char *dirname_buf = strdup(outfile);
+    char *basename_buf = strdup(outfile);
+    string outfile_dir(dirname(dirname_buf));
+    string outfile_name(basename(basename_buf));
+    free(basename_buf);
+    free(dirname_buf);
+    string outfile_clusters = outfile_dir + "/clusters-" + outfile_name;
+    string outfile_contours = outfile_dir + "/contours-" + outfile_name;
+
     cout << "clusters: " << n_seeds << endl;
     cout << "infile: " << infile << endl;
-    cout << "outfile: " << outfile << endl;
+    cout << "outfile clusters: " << outfile_clusters << endl;
+    cout << "outfile contours: " << outfile_contours << endl;
 
     /**
      * Load image, setup memory
@@ -106,17 +119,20 @@ int main(int argc, char *argv[])
     StopWatchLinux timer;
 
     timer.start();
-    Mat img_rgb = imread(infile, IMREAD_COLOR);
+    Mat img_rgb_in = imread(infile, IMREAD_COLOR);
     timer.stop();
     MARK_TIME("image load time");
 
-    unsigned int width = img_rgb.cols;
-    unsigned int height = img_rgb.rows;
+    unsigned int width = img_rgb_in.cols;
+    unsigned int height = img_rgb_in.rows;
     unsigned int n_pixels = width * height;
+
+    Mat img_rgb_out;
+    img_rgb_out.create(height, width, img_rgb_in.type());
 
     // Convert to CIELAB
     Mat h_img_lab_in, h_img_lab_out;
-    cvtColor(img_rgb, h_img_lab_in, COLOR_BGR2Lab);
+    cvtColor(img_rgb_in, h_img_lab_in, COLOR_BGR2Lab);
     h_img_lab_out.create(
         h_img_lab_in.rows, h_img_lab_in.cols, h_img_lab_in.type());
 
@@ -129,9 +145,10 @@ int main(int argc, char *argv[])
     size_t seeds_size = sizeof(Seed_t) * n_seeds;
 
     ClosestSeed_t *d_distances = NULL;
+    ClosestSeed_t *h_distances = NULL;
     size_t distances_size = sizeof(ClosestSeed_t) * n_pixels;
 
-    Mat gold_img_lab;
+    Mat gold_img_lab, img_out_contours;
     Seed_t *h_gpu_seeds = NULL, *h_gold_seeds = NULL;
     double percent_match = 0.0;
 
@@ -166,6 +183,12 @@ int main(int argc, char *argv[])
 
     timer.stop();
     MARK_TIME("kernel latency");
+
+    if ((h_distances = (ClosestSeed_t *)malloc(distances_size)) == NULL)
+        ERR("failed to allocate space for output distances array on host");
+    if ((ret = cudaMemcpy(h_distances, d_distances, distances_size,
+                          cudaMemcpyDeviceToHost)))
+        ERR("failed to copy output distances array to host");
 
     /**
      * Run gold standard and compare outputs
@@ -210,14 +233,19 @@ int main(int argc, char *argv[])
     }
 
     /**
-     * Write the output image to filesystem
+     * Write the output images to filesystem
      */
 
-    // Convert back to RGB
-    cvtColor(h_img_lab_out, img_rgb, COLOR_Lab2BGR);
+    // Convert output clusters image to RGB and write to disk
+    cvtColor(h_img_lab_out, img_rgb_out, COLOR_Lab2BGR);
+    if (!imwrite(outfile, img_rgb_out))
+        ERR("failed to write output superpixels image to file: %s", outfile);
 
-    if (!imwrite(outfile, img_rgb))
-        ERR("failed to write output image to file: %s", outfile);
+    // Draw cluster contours over copy of input image and write to disk
+    img_out_contours = img_rgb_in.clone();
+    draw_contours(img_out_contours, h_distances);
+    if (!imwrite(outfile, img_out_contours))
+        ERR("failed to write output contours image to file: %s", outfile);
 
     /**
      * Cleanup
@@ -229,6 +257,7 @@ err:
     code = 1;
 
 end:
+    free(h_distances);
     cudaFree(d_distances);
     cudaFree(d_seeds);
     cudaFree(d_img);
