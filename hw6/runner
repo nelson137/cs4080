@@ -1,0 +1,89 @@
+#!/bin/bash
+
+set -e
+
+info() { printf -- "$*" >&2; }
+info_nl() { echo "$*" >&2; }
+info_p() { cat >&2; }
+
+unset CSV
+
+print_data() { if [ -n "$CSV" ]; then echo "$@"; fi; }
+
+if [ -t 1 ]; then
+    echo 'WARNING: stdout is not redirected, csv output will not be printed' >&2
+else
+    CSV=1
+fi
+
+run_once() {
+    #./homework6 "$K" ../../Astronaught.png out.png \
+    ./homework6-no-gold "$K" ../../Astronaught.png out.png \
+      | awk '/^kernel/{k=$3} /^gold/{g=$4} END{print k,g}'
+}
+
+run_avg() {
+    local N=3
+    local k_sum=0 k_avg k_range
+    local g_sum=0 g_avg g_range
+    local -a k_times g_times
+
+    # Warmup
+    run_once &>/dev/null
+
+    for i in $(seq $N); do
+        read k_ms g_ms < <(run_once)
+	info '.'
+	k_times+=( $k_ms ); k_sum+="+$k_ms"
+	g_times+=( $g_ms ); g_sum+="+$g_ms"
+        sleep .25
+    done
+    info '\r\e[2K'
+
+    if (( ${#k_times[@]} == N )); then
+        # Average times
+        k_avg="$(echo "scale=4; ($k_sum) / $N.0" | bc -l)"
+        # Sort times
+        mapfile -t k_times < <(printf '%s\n' "${k_times[@]}" | sort -n)
+        # Store min and max times
+        k_range="$(echo "scale=4; ${k_times[-1]}-${k_times[0]}" | bc -l)"
+    fi
+
+    if (( ${#g_times[@]} == N )); then
+        # Do the same for gold
+        g_avg="$(echo "scale=4; ($g_sum) / $N.0" | bc -l)"
+        mapfile -t g_times < <(printf '%s\n' "${g_times[@]}" | sort -n)
+        g_range="$(echo "scale=4; ${g_times[-1]}-${g_times[0]}" | bc -l)"
+    fi
+
+    echo "$k_avg $k_range $g_avg $g_range"
+}
+
+print_data 'Clusters,Kernel Latency (ms),Range,Gold Standard Latency (ms),Range'
+
+info_nl
+
+(( $# )) || set -- 64 256 1024 4096
+
+for K; do
+    #print_data ',,'
+    info_nl "K=$K"
+    read k_avg k_range g_avg g_range < <(run_avg)
+    if [[ $g_avg && $g_range ]]; then
+        {
+            echo '  , ,Average,Range'
+            echo "  ,Kernel,$k_avg,$k_range"
+            echo "  ,Gold,$g_avg,$g_range"
+        } | column -ts, | info_p
+        print_data "$K,$k_avg,$k_range,$g_avg,$g_range"
+    elif [[ $k_avg && $k_range ]]; then
+        {
+            echo '  , ,Average,Range'
+            echo "  ,Kernel,$k_avg,$k_range"
+        } | column -ts, | info_p
+        print_data "$K,$k_avg,$k_range,,"
+    else
+        info_nl 'error: no stats found'
+    fi
+    info_nl
+done
