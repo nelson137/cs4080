@@ -1,0 +1,47 @@
+#!/bin/bash
+
+set -e
+
+info() { echo "$@" >&2; }
+
+unset CSV
+
+print_data() { if [ -n "$CSV" ]; then echo "$@"; fi; }
+
+if [ -t 1 ]; then
+    echo 'WARNING: stdout is not redirected, csv output will not be printed' >&2
+else
+    CSV=1
+fi
+
+run_once() {
+    #./homework5-no-gold "$R" lena.pgm /dev/null "$T" \
+    #  | awk '{t=$3} END{print t}'
+    ./homework5 "$R" lena.pgm /dev/null "$T" \
+      | awk '/^kernel/{k=$3} /^gold/{g=$4} END{print k,g}'
+}
+
+run_avg() {
+    local N=3 kernel_sum=0 kernel_avg gold_sum=0 gold_avg
+    for i in $(seq "$N"); do
+        read kernel_ms gold_ms < <(run_once)
+        kernel_sum+="+$kernel_ms"
+        gold_sum+="+$gold_ms"
+        sleep .25
+    done
+    kernel_avg="$(echo "scale=4; ($kernel_sum) / $N.0" | bc -l)"
+    gold_avg="$(echo "scale=4; ($gold_sum) / $N.0" | bc -l)"
+    echo "$kernel_avg $gold_avg"
+}
+
+print_data 'Threads per Block,Radius,Kernel Latency (ms),Gold Standard Latency (ms)'
+
+for T in 16 64 256 1024; do
+    print_data ',,,'
+    for R in 3 7 11 15; do
+        info "T=$T, R=$R"
+        read kernel_ms gold_ms < <(run_avg)
+        info "  kernel=$kernel_ms gold=$gold_ms"
+        print_data "$T,$R,$kernel_ms,$gold_ms"
+    done
+done
